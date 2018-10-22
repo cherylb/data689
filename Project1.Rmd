@@ -1,0 +1,615 @@
+---
+title: "Project 1"
+author: "Cheryl Bowersox"
+date: "Monday, April 09, 2018"
+output: html_document
+---
+
+# Project 1
+## Part A
+Create a forecast for how much is withdrawn from four ATM machines in May 2010 using given data.  
+
+The data was saved as a .csv file and loaded into R.  It was evaluated for obvious outliers and missing values.  
+
+**Outliers and Missing values**
+
+One value was found that appeared to be in error, on 2/9/2010 ATM 4 showed cash dispersed of over $10 Million. This is assumed to be in error, and was removed from the data set. 
+When evaluating missing values, ATM3 appeared to have zero measurements from May 2009 through April 2010.  It could be assumed from this information that ATM3 was not in use in 2009 and only began use at the end of April 2010. 
+
+Additionally, there are 3 missing values from ATM1, 2 from ATM2, and 14 with no ATM assigned.Since the data set is large these missing values are removed. All other zero values are assumed to be correct data points where no cash was withdrawn on that data. 
+
+
+```{r}
+suppressWarnings(library(fma))
+suppressWarnings(library(fpp))
+suppressWarnings(library(forecast))
+suppressWarnings(library(dplyr))
+suppressWarnings(library(xts))
+suppressWarnings(library(ggplot2))
+
+#load data
+f <- "ATM624data.csv"
+atmdata <- read.csv(file = f,stringsAsFactors= FALSE, strip.white = TRUE)
+boxplot(atmdata$Cash)
+summary(atmdata)
+#check for NA
+atmNA <- atmdata[is.na(atmdata$Cash),]
+(atmNA%>%group_by(ATM)%>%summarise(a=n()))
+
+#new data set, no missing vaues and no max Cash
+atmdf<-atmdata[complete.cases(atmdata), ]
+x <- max(atmdf$Cash)
+
+atmdf<-atmdf%>%filter(Cash < x)
+
+atmdf$DATE <- as.Date(as.character(atmdf$DATE),format="%m/%d/%Y")
+
+```
+
+Reviewing the distribution of individual ATMS indicates that they have different models and should be forecast separately. 
+
+```{r}
+
+ggplot(aes(y = Cash, x = ATM), data = atmdf) + geom_boxplot()
+
+
+cashplot <- ggplot(atmdf, aes(DATE, Cash)) +
+           geom_point() +
+           ggtitle("ATM Cash") +
+            xlab("Date") + ylab("Cash 1000s")
+(cashplot + facet_grid(. ~ ATM))
+```
+
+```{r}
+
+
+
+#convert to ts data  ATM3 is a special case
+atm1 <- atmdf%>%filter(ATM == "ATM1")%>%select(DATE,Cash)
+atm2 <- atmdf%>%filter(ATM == "ATM2")%>%select(DATE,Cash)
+atm3 <- atmdf%>%filter(ATM == "ATM3")%>%select(DATE,Cash)
+atm4 <- atmdf%>%filter(ATM == "ATM4")%>%select(DATE,Cash)
+
+#min max ATM1
+min(atm1$DATE)
+max(atm1$DATE)
+
+a1.ts <- as.ts(x = atm1[, -1], order.by = atm1$DATE)
+a2.ts <- as.ts(x = atm2[, -1], order.by = atm2$DATE)
+a3.ts <- as.ts(x = atm3[, -1], order.by = atm3$DATE)
+a4.ts <- as.ts(x = atm4[, -1], order.by = atm4$DATE)
+
+plot(a1.ts)
+plot(a2.ts)
+plot(a3.ts)
+plot(a4.ts)
+
+#Standard Deviation
+sd(a1.ts)
+sd(a2.ts)
+sd(a3.ts)
+sd(a4.ts)
+```
+Plotting and examining the time series for each ATM shows that ATM 3 is special case in that it only has 3 observations, and ATM 4 also appears to be a unique case as it has a very large standard deviation,  `r sd(a4.ts)` and a transformation might be appropriate. Each ATM should be forecast separately. 
+
+**Model for ATM1**
+
+ATM1 has 362 data points, the first 292 points were used to train the models, with the remaining 70 (10 weeks) were used to evaluate the model.  There does not appear to be a long-term or seasonal pattern to this ATM usage.   The appears to be a strong weekly component when evaluating for different lag cycles. 
+
+Three models were selected to compare for forecasting ATM1 data:  a Naive model, adjusted, a seasonally adjusted additive decomposition and an auto -AIRM model. 
+
+```{r}
+
+# checking ACF
+ 
+#Model for ATM1
+
+#testing - for weekly,biweekly lag
+lagdays <- c(1,5, 7, 14, 30,60)
+lag.plot(a1.ts, lags = 6, set.lags = lagdays, do.lines = FALSE)
+Acf(a1.ts, plot=T) 
+
+#seasonal adjustment
+a1.ts <- ts(a1.ts,frequency=7)
+traina1 <- window(a1.ts,start = 1,end=42)
+testa1 <- window(a1.ts, start=43)
+
+seasonplot(a1.ts,ylab="Cash 1000s", xlab="Day", main="Weekly Plot, ATM1", col=1:20, pch=19)
+
+#Models
+#Naive
+fit1a1 <- naive(traina1, h=70)
+fcst1a1 <-forecast(fit1a1, h=70)
+accuracy(fit1a1, testa1)
+
+
+```
+
+Using Holt-Winters additive decomposition to adjust for the weekly trend results in 
+```{r}
+a1cad <- decompose(traina1)
+plot(a1cad)
+a1adj<- traina1-a1cad$seasonal
+plot(a1adj, main="Weekly adjusted ATM1")
+
+#Holt-Winters seasonal method - additive, seasons are consistent
+fit2a1 <- hw(traina1,seasonal="additive", h=70)
+fcst2a1 <-forecast(fit2a1,h=70)
+```
+
+For the 3rd model select, the auto.arima algorithm was allowed to select the best ARIMA model. 
+The best model selected was ARIMA(1,0,0)(2,0,0)[7]
+This model helps 
+```{r}
+#ARIMA Model - machine selected
+#take the seasonal difference
+tsdisplay(diff(traina1,lag =7,2))
+(fit3a1 <- auto.arima(traina1))
+tsdisplay(residuals(fit3a1))
+Box.test(residuals(fit3a1), lag=7, fitdf=4, type="Ljung")
+#f2<-auto.arima(traina1, stepwise=FALSE, approximation=FALSE)
+
+fcst3a1=forecast(fit3a1, h=70)
+
+```
+
+Comparing the accuracy of the 3 models shows the, ARMIA model provides the best accuracy
+```{r}
+
+round(accuracy(fcst1a1, testa1),2)
+round(accuracy(fcst2a1, testa1),2)
+round(accuracy(fcst3a1, testa1),2)
+
+
+plot(traina1,ylab="Cash withdrawal at ATM1, 1000s", xlim=c(1,53))
+lines(testa1, col=4)
+lines(fcst1a1$mean, col=1)
+lines(fcst2a1$mean, col=2)
+lines(fcst3a1$mean, col=3)
+legend("topleft", lty=1, col=c(4,1,2,3),
+  legend=c("Test Data", "Naive method","H-W Method","ARIMA"),pch=1,cex=.69)
+```
+
+Refitting the ARIMA model to calculate for all data and create predictions for the next 30 days (May 2010) give the following model:
+
+```{r}
+
+refit1 <- Arima( model=fit3a1, a1.ts)
+preda1 <- predict(refit1, n.ahead=31)
+
+plot(a1.ts,main="Cash withdrawal at ATM1 with Predictions, 1000s", xlim=c(50,57))
+lines(preda1$pred, col=4)
+legend("topleft", lty=1, col=c(4),
+  legend=c("predicted values"),pch=1,cex=.69)
+
+#Just predictions
+d <- seq(atm1[362,1]+1,atm1[362,1]+31,by="days")
+p<- ts(preda1$pred,frequency=1)
+plot(p, axes=F, main="Predicted Cash withdrawel from ATM1 for May 2010", ylab="cash")
+axis(1,at=1:31, labels =d)
+#Summary Stats
+summary(as.vector(p))
+
+dfPred<-data.frame(Date = d)
+dfPred$ATM1<- preda1$pred
+
+```
+
+**Model for ATM2**
+
+ATM2 has `r nrow(atm2)` data points, the first 294 points were used to train the models, with the remaining 69 (~10 weeks) were used to evaluate the model.  There does not appear to be a long-term or seasonal pattern to this ATM usage. Like ATM1, the appears to be a strong weekly component when evaluating for different lag cycles at 7, 14, and 21 days. 
+
+Because of the similarity to ATM1 data set, three similar models were evaluated. 
+
+```{r}
+
+# checking ACF
+
+#testing - for weekly,biweekly lag
+lagdays <- c(1,2, 7, 14, 21,28)
+lag.plot(a2.ts, lags = 6, set.lags = lagdays, do.lines = FALSE)
+
+Acf(a2.ts, plot=T) 
+
+#Model for ATM2
+a2.ts <- ts(a2.ts,frequency=7)
+traina2 <- window(a2.ts,start = 1,end=42)
+testa2 <- window(a2.ts, start=43)
+
+seasonplot(a2.ts,ylab="Cash 1000s", xlab="Day", main="Weekly Plot, ATM1", col=1:20, pch=19)
+
+#Models
+#Naive
+fit1a2 <- snaive(traina2, h=70)
+fcst1a2 <-forecast(fit1a2, h=70)
+accuracy(fit1a2, testa2)
+
+```
+
+Using Holt-Winters additive decomposition to adjust for the weekly trend results in 
+```{r}
+a2cad <- decompose(traina2)
+plot(a2cad)
+a2adj<- traina2-a2cad$seasonal
+plot(a2adj, main="Weekly adjusted ATM2")
+
+#Holt-Winters seasonal method - additive, seasons are consistent
+fit2a2 <- hw(traina2,seasonal="additive", h=70)
+fcst2a2 <-forecast(fit2a2,h=70)
+```
+
+For the 3rd model select, the auto.arima algorithm was allowed to select the best ARIMA model. 
+The best model selected was ARIMA(1,0,0)(2,0,0)[7]
+This model helps 
+```{r}
+#ARIMA Model - machine selected
+#take the seasonal difference
+tsdisplay(diff(traina2,lag =7,3))
+fit3a2 <- auto.arima(traina2, allowdrift=F)
+tsdisplay(residuals(fit3a2))
+Box.test(residuals(fit3a2), lag=7, fitdf=4, type="Ljung")
+#f2<-auto.arima(traina1, stepwise=FALSE, approximation=FALSE)
+
+fcst3a2=forecast(fit3a2, h=70)
+
+```
+
+Comparing the accuracy of the 3 models the ARIMA model appears to be a better fit, as the MASE is significantly lower than the other models, and at the RMSE is comparable to the seasonal naive method.Like the forecast for ATM 1,  the ARIMA model does appear to be narrowing down the further out it predicting, possibly providing a conservative forecast. This could be problematic if it routinely under-forecasting the withdrawals expected. 
+```{r}
+
+round(accuracy(fcst1a2, testa2),2)
+round(accuracy(fcst2a2, testa2),2)
+round(accuracy(fcst3a2, testa2),2)
+
+
+plot(traina2,ylab="Cash withdrawal at ATM1, 1000s", xlim=c(1,53))
+lines(testa2, col=4)
+lines(fcst1a2$mean, col=1)
+lines(fcst2a2$mean, col=2)
+lines(fcst3a2$mean, col=3)
+legend("topleft", lty=1, col=c(4,1,2,3),
+  legend=c("Test Data", "SNaive method","H-W Method","ARIMA"),pch=1,cex=.69)
+```
+
+Refitting the ARIMA model to calculate for all data and create predictions for the next 30 days (May 2010) give the following model:
+
+```{r}
+refit2 <- Arima(model=fit3a2, a2.ts)
+preda2 <- predict(refit2, n.ahead=31)
+
+
+plot(a2.ts,main="Cash withdrawal at ATM2 with Predictions, 1000s", xlim=c(50,57))
+lines(preda2$pred, col=4)
+legend("topleft", lty=1, col=c(4),
+  legend=c("predicted values"),pch=1,cex=.69)
+
+#Just predictions
+d <- seq(atm2[363,1]+1,atm2[363,1]+31,by="days")
+p<- ts(preda2$pred,frequency=1)
+plot(p, axes=F, main="Predicted Cash withdrawel from ATM2 for May 2010", ylab="cash")
+axis(1,at=1:31, labels =d)
+#Summary Stats
+summary(as.vector(p))
+
+dfPred$ATM2 <-preda2$pred
+
+
+```
+
+**Model for ATM3**
+
+ATM 3 is a special case, in that there is not enough historical data to model the future needs for this ATM.  
+There are two possible approaches, the first use the current mean for the data that is available to predict May 2010, the second is to use one of the other ATM models to forecast.  
+The advantage of using the mean for the existing data is that it is simple and does not create any false accuracy, The disadvantage to doing this is that it does not take into account the weekly nature of the ATM withdrawals seen in other machines.  
+
+
+```{r}
+a3.ts <- window(a3.ts, start=363)
+t1<- as.vector(tail(a1.ts,3))
+t2<- as.vector(tail(a2.ts,3))
+t3<- as.vector(tail(a3.ts,3))
+# forcing the model to match ATM1
+
+
+
+dfPred$ATM3 <- preda1$pred
+
+
+```
+To create the forecast for this ATM machine, I compared the only 3 data points we have for this ATM with the other two similar ATMs, and used the ATM that most closely matched to forecast future values. These data points happen to exactly match the data for ATM1, so the same model is used to calculate forecaster values for May 2010. 
+
+**Model for ATM4**
+
+The data for ATM 4 presents very differently from that used for ATM 1 and 2.  The standard deviation and mean are both much higher than the other forecasts, and the data is skewed.  Because of the large standard deviation, a log transformation and a Box-Cox transformation with lambda = .15 were compared. 
+```{r}
+#ATM 4 transformed
+hist(a4.ts, main= "ATM 4")
+hist(log(a4.ts),main="Log Transform for ATM 4")
+lambda <- BoxCox.lambda(a4.ts) # = 0.16
+
+ba4.ts <- BoxCox(a4.ts,lambda)
+hist(ba4.ts)
+sd(ba4.ts)
+
+
+# checking ACF
+ 
+#Model for ATM1
+
+#testing - for weekly,biweekly lag
+lagdays <- c(1,2, 7, 14, 21,35)
+lag.plot(a4.ts, lags = 6, set.lags = lagdays, do.lines = FALSE)
+
+Acf(a4.ts, plot=T, main ="original ATM 4")
+
+Acf(ba4.ts, plot=T,main="transformed l = .16")
+
+
+````
+The weekly lag is more apparent when viewing the transformed data,and is still significant at 7, 15, and 21 days.  There are 364 data points available in this data. As a points of reference,  both the seasonal naive and the mean forecast methods were first used.  
+
+```{r}
+#seasonal adjustment
+ba4.ts <- ts(ba4.ts,frequency=7)
+traina4 <- window(ba4.ts,start = 1,end=42)
+testa4 <- window(ba4.ts, start=43)
+
+seasonplot(ba4.ts,ylab="Cash 1000s", xlab="Day", main="Weekly Plot, ATM4", col=1:20, pch=19)
+
+#Models
+#Seasonal Naive
+fit1a4 <- snaive(traina4, h=70)
+fcst1a4 <-forecast(fit1a4, h=70)
+accuracy(fit1a4, testa4)
+
+#mean
+fit2a4 <- meanf(traina4, h=70)
+fcst2a4 <-forecast(fit2a4, h=70)
+accuracy(fit2a4, testa4)
+
+```
+
+Stl  was used to decompose the data. The residuals of the model appear fairly uniform and the seasonal pattern is consistent. 
+
+```{r}
+
+fit3a4 <- stl(traina4, s.window = 15)
+fcst3a4 <- forecast(fit3a4, method = "naive", h=70)
+```
+
+AS a comparison to the other ATM machine models,  the auto.arima algorithm was again used to select the best ARIMA model. 
+The best model selected was ARIMA(0,0,0)(2,0,0)[7], which was quite similar to the one found by ATM1. 
+
+```{r}
+#ARIMA Model - machine selected
+#take the seasonal difference
+tsdisplay(diff(traina4,lag =7))
+(fit4a4 <- auto.arima(traina4))
+tsdisplay(residuals(fit4a4))
+Box.test(residuals(fit3a1), lag=7, fitdf=4, type="Ljung")
+#f2<-auto.arima(traina1, stepwise=FALSE, approximation=FALSE)
+
+fcst4a4=forecast(fit4a4, h=70)
+
+```
+
+Comparing the accuracy of these four models again gives the ARIMA model as the most accurate, but its very close in accuracy measures to the mean model used in forecast2, which may indicate the simpler model may be the better one.  This result makes sense when evaluating the graph, as the ARIMA model approaches the mean forecast value the further out the forecast runs.  
+```{r}
+round(accuracy(fcst1a4, testa4),2)
+round(accuracy(fcst2a4, testa4),2)
+round(accuracy(fcst3a4, testa4),2)
+round(accuracy(fcst4a4, testa4),2)
+
+
+plot(traina4,ylab="Cash withdrawal at ATM1, 1000s", xlim=c(1,53))
+lines(testa4, col=4)
+#lines(fcst1a4$mean, col=1)
+lines(fcst2a4$mean, col=2)
+#lines(fcst3a4$mean, col=3)
+lines(fcst4a4$mean, col=5)
+legend("topleft", lty=1, col=c(4,2,5),
+  legend=c("Test Data", "Mean Method", "ARIMA"),pch=1,cex=.69)
+```
+
+Creating a prediction for May 2010 for ATM 4 results in
+```{r4}
+refit <- Arima( model=fit4a4, ba4.ts)
+preda4<- predict(refit, n.ahead=31)
+
+plot(ba4.ts,main="Cash withdrawal at ATM4 with Predictions, 1000s", xlim=c(50,57))
+lines(preda4$pred, col=4)
+legend("topleft", lty=1, col=c(4),
+  legend=c("predicted values"),pch=1,cex=.69)
+
+#Just predictions - Transformed
+d <- seq(atm4[364,1]+1,atm4[364,1]+31,by="days")
+
+p4<- ts(preda4$pred,frequency=1)
+p<-(lambda*p4+1)^(1/lambda)
+plot(p, axes=F, main="Predicted Cash withdrawel from ATM4 for May 2010", ylab="cash")
+axis(1,at=1:31, labels =d)
+#Summary Stats
+summary(as.vector(p))
+
+
+dfPred$ATM4 <- p
+```
+
+**Summary Forecast for May 2010 by ATM**
+Summary output file name:  ATM Predictions May 2010 CB.csv
+These values can be used to forecast the cash withdrawal per ATM for the month of May, however they are less precise the further out the forecast is made.  If the goal of the forecast is to ensure adequate cash available in the machines and a full month is required at a time,  a better method may be to forecast using the upper bound of the weekly seasonal patterns to avoid under-forecasting.  
+
+```{r}
+###Summary and output to excel
+(summary(dfPred))
+write.csv(dfPred, "ATM Predictions May 2010 CB.csv") 
+```
+****
+
+## Part B
+Using data provided for KWH usage for 1993 through 2013, model KWH usage for 2014. 
+
+**Outliers and Null values**
+The data set contains 192 monthly observations, with a minimum usage3 of 77K and max of 107K. There is a single 'NA' value and no blank values.  The single null value was replaced with the mean value for the current year. The minimum value of 77K is an outlier, but does not appear to be an erroneous observation
+
+**Transformation**
+
+The data has a large standard deviation and slightly skewed, but not dramatically so.  It is appears to be approximately normally distributed and a transformation does not appear to appropriate. 
+
+```{r}
+#import data
+f <- "ResidentialCustomerForecastLoad-624.csv"
+cldata <- read.csv(file = f,stringsAsFactors= FALSE, strip.white = TRUE)
+head(cldata)
+boxplot(cldata$KWH)
+summary(cldata)
+plot(cldata$KWH)
+#check for NA
+clNA <- cldata[is.na(cldata$KWH),]
+#add year column
+cldata <- cldata%>%
+  mutate(YM= as.yearmon(as.Date(paste("01-",YYYY.MMM, sep = ""), format = "%d-%Y-%b")))%>%
+  mutate(Year =format(YM, "%Y"))
+
+m <- cldata%>%filter(!is.na(KWH))%>%group_by(Year)%>%summarise(m<- mean(KWH))%>%filter(Year == "2008")
+#replace with mean for 2008
+cldata$KWH[is.na(cldata$KWH)] <- as.integer(m[1,2])
+
+hist(cldata$KWH)
+
+kurtosis(cldata$KWH)
+skewness(cldata$KWH)
+
+#transform to time series with frequency 12
+
+clts <- ts(cldata%>%select(KWH),start = c(1998,1), frequency = 12)
+plot(clts, main = "Kwh over Time 1998-2013")
+seasonplot(clts)
+seasonplot(clts,ylab="KWH", xlab="Month", main="Monthly Plot KWH", col=1:20, pch=19)
+
+
+```
+The seasonal plot shows an definitive seasonal trend, which makes intuitive sense as energy usage would fluctuate with the season. 
+
+Evaluating the ACF and a decomposed view of the data shows there appears to be an overall increasing trend along with the seasonal competent, however the ACF plot shows has consistent pattern of lags, indicating the data be stationary when the seasonal trend is accounted for. The ACF test also indicates the data is stationary, with a very low p-value.  
+
+To create a model that accounts for this 
+
+To model a full year of 2014 a few seasonally adjusted models may be appropriate.  Three different models were selected to compare.  
+A seasonal Naive model was used as a simple control model. 
+A multiplicative STL decomposition was used as 
+
+```{r}
+#Eval Lags
+```{r}
+
+plot(decompose(clts))
+Acf(clts, plot=T) 
+adf.test(clts, alternative = "stationary")
+```
+
+
+To find the appropriate model the data was broken into a training and test data sets,  the training set accounting for 85% of the data from 1998-2011, and a test set the remaining data from 2012 - 2013 to evaluate each model's accuracy. 
+
+Four different models were selected to compare.  
+- seasonal Naive model was used as a simple control model. 
+- STL decomposition was used with random walk was used.  
+- Holt-Winter seasonal additive method was used.  
+Additive methods were used because the seasonal trend does not appear to be changing over time. 
+- ARIMA model auto-selected
+
+```{r}
+#train and test forecasts 12 years train, 4years test, using full 
+
+traincl <- window(clts, start = c(1998,1), end = c(2011,12))
+testcl <- window(clts, start = c(2012, 1), end = c(2013,12))
+
+
+#Model1: Seasonal Naive
+fit1cl <- snaive(traincl, h=27)
+fcst1 <- forecast(fit1cl, h = 27)
+plot(fcst1, main = "Seasonal Naive Method")
+
+#reformat data for stl 
+traincl2 <- ts(clts, start = 1998, end = 2011, frequency=12)
+testcl2 <- ts(clts,start = 2012, end = 2014, frequency=12)
+fit2cl <- stl(traincl2, s.window ="periodic")
+fcst2 <- forecast(fit2cl, method = "naive", h = 27)
+plot(fcst2, main = "STL + Random Walk")
+
+#h-w additive
+fit3cl <- hw(traincl,seasonal="additive", h=27)
+fcst3 <- forecast(fit3cl, h=27)
+
+
+#Auto ARIMA modle
+
+tsdisplay(diff(traincl,lag =12,3))
+fit4cl <- auto.arima(traincl)
+tsdisplay(residuals(fit3cl))
+Box.test(residuals(fit3a1), lag=12, fitdf=9, type="Ljung")
+fcst4 <- forecast(fit4cl, h=27)
+
+
+
+# Summary of the models to compare accuracy
+
+  round(accuracy(fcst1, testcl),2)
+  round(accuracy(fcst2, testcl2),2)
+  round(accuracy(fcst3, testcl),2)
+  round(accuracy(fcst4, testcl),2)
+
+plot(traincl,ylab="KWH", xlim = c(1998,2014))
+lines(testcl, col=1, type="o", lty=2)
+lines(fcst1$mean, col=7)
+lines(fcst2$mean, col=2)
+lines(fcst3$mean, col=3)
+lines(fcst4$mean, col=4)
+legend("topleft", lty=1, col=c(1,7,2,3,4),
+  legend=c("Test Data", "Seasonal Naive Method", "STL", "H-W", "ARIMA"),pch=1,cex=.45)
+
+
+
+
+```
+
+Based on both the accuracy measures and the clarity of the model, the Holt-Winters additive method creates the best model.  
+
+Using this model to forecast 2014 gives
+
+```{r}
+#refitting with all data
+fit3cl <- hw(clts,seasonal="additive")
+
+predictcl<- predict(fit3cl, n.ahead=12)
+
+
+plot(predictcl,main="KWH by month with Predictions", xlim=c(1998,2015))
+lines(predictcl$mean, col=4)
+legend("topleft", lty=1, col=c(4),
+  legend=c("predicted values"),pch=1,cex=.69)
+
+#Just predictions data
+d <- as.yearmon(seq(as.Date("2014/1/1"), as.Date("2016/1/1"), by="mon"))[1:24]
+dfPredictCL <- data.frame(Date = d)
+dfPredictCL$Prediction <- as.vector(predictcl$mean)
+dfPredictCL$lower <- as.vector(predictcl$lower[,1])
+dfPredictCL$upper <-as.vector(predictcl$upper[,1])
+
+summary(dfPredictCL)
+
+#export to location
+
+```
+
+**Summary Output    
+
+Summary output file name:  KWH Predictions 2014 CB.csv
+These values can be used to forecast the KWH by month for 2014. A lower and upper interval at 80% confidence is provided.  Depending on the purpose of the forecast, these bounds can create more conservative estimates.  If the goal is to make sure there is enough energy available, and it it not easily adjusted when needed, then using the upper bound would provide a better forecast.  If the goal is to review revenue based on KWH usage, using a lower level is more conservative as it will typically under-forecast the expected usage.
+
+
+
+```{r}
+###Summary and output to excel
+
+write.csv(dfPredictCL, "KWH Predictions 2014 CB.csv") 

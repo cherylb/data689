@@ -1,0 +1,886 @@
+---
+title: "Data624_group1_Project2"
+author: "Prashant Bhuyan,Valerie Briot,Bruce Hao,Cheryl Bowersox,Valerie Briot,Chris Estevez "
+date: "May 7, 2018"
+output:
+  word_document: default
+
+---
+
+# Business Case 
+
+New FDA regulation require the ABC company to understand our manufacturing process as it relates to the pH of the beverages we produced. To this effect, a predictive model has been commissioned by the Production manager to better understand the predictive factors and report on the predictive model of pH.  
+
+##Business Considerations  
+
+The ABC Company has limited resources for processing large amounts of data and analyzing the results, and is working under an accelerated timeline to meet the new regulations.  Consequently, the model selected should involve limited data cleaning, lend itself well to automation, and should predict pH with a fair degree of accuracy. More importantly, the interpretation of the model should provide actionable insights into the primary levers of pH levels.
+
+## Deliverables 
+
+* A Executive level report of the findings
+* A Detail technical reports to be reviewed by an outside consultant 
+
+## Technical Considerations 
+
+The team is operating under a very tight deadline, the deliverables have to be remitted on 05/22/2018. Since the team is operating remotely in various location, the following tools were adopted to enhanced efficient communication; 
+
+* Slack was used for daily communication during the project and for quick access to code and documentation.
+* GoToMeeting was utilized for regular touch point meetings and on as needed basis.  
+* Github was used for version control management and to ensure each team member had access to the latest version of the project documentation
+* R was used to perform analysis, R code can be found in Appendix A for Technical report 
+
+**Team Members**  
+Prashant Bhuyan (Team Leader)  
+Bruce Hao  
+Cheryl Bowersox  
+Chris Estevez  
+Valerie Briot  
+
+```{r Libraries, message=FALSE, warning=FALSE}
+
+#Please update Data explorer to below version
+pack_URL= "https://cran.r-project.org/src/contrib/Archive/DataExplorer/DataExplorer_0.4.0.tar.gz"
+if (!require("DataExplorer")) install.packages(pack_URL, repos=NULL, type='source')
+
+library(psych)        # EDA, describe function  
+library(tidyverse)    #
+library(knitr)        #
+library(VIM)          # correlation
+library(caret)        # correlation, model building
+library(corrplot)     # Correlation
+library(mice)         # Imputation
+library(MASS)         # BoxCox Transformation
+library("usdm")
+library(forecast)     # alternate transform
+library(ranger)       # Random Forest Model
+
+library(parallel)     # Parallel processing for model building
+library(doParallel)   # Parallel processing for model building
+
+library(randomForest) # Get Tree, model interpretation
+
+rm(pack_URL)
+```
+
+
+# Data Set
+
+The analysis will be performed on historical data. For reproducible of the results, the data was loaded to and accessed from a Github repository.  
+
+```{r Load_data, message=FALSE, warning=FALSE}
+
+#set file name - to be change by github link#
+beverages_filename <- "https://raw.githubusercontent.com/vbriot28/Data624_Group1_FinalProject/master/StudentData.csv"
+
+
+# Load Trainning Data Set
+beverages <-read.csv(beverages_filename, header=TRUE, sep=",",stringsAsFactors = F)
+
+#From DataExplorer
+data_list <- list(beverages)
+
+PlotStr(data_list, type="r")
+
+rm(data_list)
+```
+
+```{r DataSet_Characteristics, message=FALSE, warning=FALSE}
+
+dim(beverages)
+summary(beverages)
+object.size(beverages)
+```
+
+The data-set is comprised of 33 variables and 2571 observations. At first glance, it is clear that some variables have missing values that will need to be addressed. All the variables beside Brand.code are numeric.  
+
+# Data Exploration and Statistic Measures
+
+The purpose of the data exploration and statistic measures phase is to understand the data to determine how to process the data-set for modelling.  
+
+## Descriptive Statistics
+
+Descriptive statistics were calculated to examine the basic features of the data.
+
+```{r Descriptive_statistic_matrix, message=FALSE, warning=FALSE}
+
+#Calculate mean missing values per variable
+missing_values <- beverages %>% 
+  summarize_all(funs(sum(is.na(.))))
+
+missing_values_ratio <- beverages %>% 
+  summarize_all(funs(sum(is.na(.)) / length(.)*100))
+
+#Use Describe Package to calculate Descriptive Statistic
+(beverages_d <- describe(beverages, na.rm=TRUE, interp=FALSE, skew=TRUE, ranges=TRUE, trim=.1, type=3, check=TRUE, fast=FALSE, quant=c(.25,.75), IQR=TRUE))
+
+beverages_d$missing <- t(missing_values)
+beverages_d$miss_ratio <- t(round(missing_values_ratio,4))
+
+beverages_d <- beverages_d %>% 
+  dplyr::select(n, missing, miss_ratio, mean, sd, min, max, skew, kurtosis, median, IQR, Q0.25, Q0.75)
+
+kable(beverages_d)
+
+
+rm(beverages_d,missing_values,missing_values_ratio)
+```
+
+From the skewness coefficient, we observed that some variables may have a right skewed distribution (PSC.CO2, Temperature, Oxygen.Filler, Air.Pressurer) or a left skewed distribution (Filler.Speed, MFR). As we observed prior, we have missing values for some of the variables, we will need to take this into considerations.
+
+##Analysis of predictors  
+
+We will now examined each predictor to understand their distribution and determine whether any transformation is required.
+
+```{r Histograms, message=FALSE, warning=FALSE}
+
+# from DataExplorer Package
+
+DataExplorer::HistogramContinuous(beverages)
+
+```
+
+##Variable to Variable Analysis   
+
+###Correlation Analysis   
+
+The correlation matrix shown below highlights correlations among several predictor variables. 
+
+
+```{r correlation_matrixB, fig.height=12, fig.width=12, message=FALSE, warning=FALSE}
+
+cor_mx =cor(beverages%>% dplyr::select(-Brand.Code) ,use="pairwise.complete.obs", method = "pearson")
+
+corrplot(cor_mx, method = "color",type = "upper", order = "original", number.cex = .7,addCoef.col = "black",   #Add coefficient of correlation
+                            tl.srt = 90,# Text label color and rotation
+                            diag = TRUE)# hide correlation coefficient on the principal diagonal
+
+rm(cor_mx)
+```
+
+This section will test the predictor variables to determine if there is correlation among them. Variance inflation factor (VIF) is used to detect multicollinearity, specifically among the entire set of predictors versus within pairs of variables.
+
+We found just one of the numeric predictor variables, Hyd.Pressure3, had a high collinearity. The remainder have low VIF scores.  Hyd.Pressure3 was dropped from the data set during transformations
+
+```{r multcollinearity, message=FALSE, warning=FALSE}
+
+# from VIM Package
+beverages_predictors <- dplyr::select(beverages, -PH)
+
+numeric_fields <- dplyr::select_if(beverages_predictors, is.numeric)[, 3:15]
+
+usdm::vifcor(numeric_fields) 
+
+rm(beverages_predictors,numeric_fields)
+```
+
+
+# Data Transformation  
+
+## Missing Values  
+
+We have some observed some predictors with missing values however no predictors are missing more than 8% of data and no rows are missing more than ?? of data.  We will feel comfortable with imputing the missing data.  
+
+```{r Missing Vaues, message=FALSE, warning=FALSE}
+# From Data Explorer  
+PlotMissing(beverages)
+
+```
+
+## Examination of Zero values  
+
+Some cases, a zero values are actually representative of missing data, is this the case here?  
+
+```{r Zero_Values, message=FALSE, warning=FALSE}
+
+df <- setNames(data.frame(colSums(beverages==0, na.rm = T)), 'Count')
+           
+df$Variable <- rownames(df)
+
+rownames(df) <- NULL
+
+df %>% dplyr::filter(!Variable %in% c("Brand.code")) %>%  
+ggplot(aes(x=reorder(Variable, Count), y=Count, fill=Count)) +
+    geom_bar(stat="identity") + coord_flip() + guides(fill=FALSE) +
+    xlab("Variable") + ylab("Number of 0 Values") + 
+    ggtitle("Count of Zero Values by Variable") +
+    geom_text(aes(label=Count), vjust=.5, hjust=-.1,position= position_dodge(width=0.5),size=3,  color="black")
+
+rm(df)
+```
+
+We had observed the high number of 0 values for variables; Hyd.Pressure1, Hyd.Pressure2, and Hyd.Pressure3 and we will add a dummy variable to flag such data.  Also, based on correlation coefficient, we will probably drop Hyd.Pressure3.  
+
+Brand.code has a proportion of its data that is unspecified, we will flag these records with a "U', for "unknown".
+
+## Data Imputation  
+
+Since we have a limited amount of missing values across predictors, we will impute the data. We will use the mice package. 
+
+```{r data imputation, message=FALSE, warning=FALSE}
+
+# Replace *BLANK Brand.Code with "U"
+
+beverages$Brand.Code[beverages$Brand.Code==""]= "U"
+
+summary(beverages$Brand.Code)
+mice_imputes <- mice(beverages, m = 2, maxit = 2, print = FALSE,seed = 143)
+densityplot(mice_imputes)
+
+```
+
+The imputed density distribution is indicated in red.
+
+```{r data imputation2, message=FALSE, warning=FALSE}
+
+# Applied the imputed values V1
+beverages_v1 =complete(mice_imputes)
+
+# Plot missing values
+PlotMissing(beverages_v1)
+rm(mice_imputes)
+```
+
+We have addressed the missing values. We will continue to identify possible problems with predictors by investigation possible near-zero variances predictors.  
+
+## Near-Zero Variance Predictors  
+
+By default, a predictor is classified as near-zero variance if the percentage of unique values in the samples is less than 10% and when the frequency ratio mentioned above is greater than 19 (95/5).
+
+These default values can be changed by setting the arguments uniqueCut and freqCut.
+
+```{r Near-zero Variance Predictors, message=FALSE, warning=FALSE}
+
+# From Caret package
+#
+x = nearZeroVar(beverages_v1, saveMetrics = TRUE)
+
+#str(x, vec.len = 2)
+
+x[x[,"zeroVar"] > 0, ]
+x[x[,"nzv"] > 0, ]
+
+rm(x)
+```
+
+Since Hyd.Pressure1 is the only variable with near zero variance and the percentage is very close to cut-off, we will not drop this variables.
+
+## Features Creation  
+
+**Invalid data or bimodal distributions** 
+
+Based on the histograms above, it's clear that some variables have bi-modal distributions or a large number of records with what appear to be invalid data, for example, Mnf.Flow and the Hyd.Pressure variables. While some models may be able to deal with such data without modification, other models may not. As such, we will create dummy variables to flag which distribution a given record belongs to within each variable.   
+
+```{r additional features, message=FALSE, warning=FALSE}
+
+beverages_v2 = beverages_v1 %>%
+  mutate(Mnf.Flow.lt0        = if_else(Mnf.Flow      <     0, 1, 0)) %>% 
+  mutate(Hyd.Pressure1.lte0  = if_else(Hyd.Pressure1 <=    0 ,1, 0)) %>% 
+  mutate(Hyd.Pressure2.lte0  = if_else(Hyd.Pressure2 <=    0, 1, 0)) %>% #remove Hyd.Pressure3 since variable dropped
+  mutate(Filler.Speed.lt2500 = if_else(Filler.Speed  <  2500, 1, 0)) %>% 
+  mutate(Carb.Flow.lt2500    = if_else(Carb.Flow     <  2000, 1, 0)) %>% 
+  mutate(Balling.lt.2.5      = if_else(Balling       <   2.5, 1, 0))
+
+```
+
+## Dropping predictors  
+
+Based on the correlation results we are proposing the drop the following predictors: Density, Balling.Lvl, Carb.Rel, Alch.Rel, and Hyd.Pressure3.  
+
+```{r dropping predictor, message=FALSE, warning=FALSE}
+
+# Drop some predictors due to high correlation  
+beverages_v2$Density <- NULL
+beverages_v2$Balling.Lvl <- NULL
+beverages_v2$Carb.Rel <- NULL
+beverages_v2$Alch.Rel <- NULL
+beverages_v2$Hyd.Pressure3 <- NULL
+
+```
+
+
+## Data Transformation  
+
+We have observed significant skewness for the following variables: PSC and Oxygen.Filler. We are proposing to apply Box-Cox transformation to these variables. 
+
+```{r boxcox tranformation, message=FALSE, warning=FALSE}
+
+# Copy our data set
+beverages_v3 <- beverages_v2
+offset <- 0.0000001
+
+# PSC
+Box = boxcox(beverages_v3$PSC ~ 1,              # Transform PSC Column as a single vector
+             lambda = seq(-6,6,0.1)              # Try values -6 to 6 by 0.1
+             )
+
+Cox = data.frame(Box$x, Box$y)            # Create a data frame with the results
+
+Cox2 = Cox[with(Cox, order(-Cox$Box.y)),] # Order the new data frame by decreasing y
+
+Cox2[1,]                                  # Display the lambda with the greatest
+                                          #    log likelihood
+
+
+lambda.PSC = Cox2[1, "Box.x"]                 # Extract that lambda
+
+#------------------------------#
+
+#PSC.FILL
+beverages_v3$PSC.Fill <- beverages_v3$PSC.Fill + offset
+
+Box = boxcox(beverages_v3$PSC.Fill ~ 1,              # Transform PSC Column as a single vector
+             lambda = seq(-6,6,0.1)              # Try values -6 to 6 by 0.1
+             )
+
+Cox = data.frame(Box$x, Box$y)            # Create a data frame with the results
+
+Cox2 = Cox[with(Cox, order(-Cox$Box.y)),] # Order the new data frame by decreasing y
+
+Cox2[1,]                                  # Display the lambda with the greatest
+                                          #    log likelihood
+
+
+lambda.PSC_Fill = Cox2[1, "Box.x"]                 # Extract that lambda
+
+#------------------------------#
+
+#PSC.CO2
+beverages_v3$PSC.CO2 <- beverages_v3$PSC.CO2 + offset
+
+Box = boxcox(beverages_v3$PSC.CO2 ~ 1,              # Transform PSC Column as a single vector
+             lambda = seq(-6,6,0.1)              # Try values -6 to 6 by 0.1
+             )
+
+Cox = data.frame(Box$x, Box$y)            # Create a data frame with the results
+
+Cox2 = Cox[with(Cox, order(-Cox$Box.y)),] # Order the new data frame by decreasing y
+
+Cox2[1,]                                  # Display the lambda with the greatest
+                                          #    log likelihood
+
+
+lambda.PSC_CO2 = Cox2[1, "Box.x"]                 # Extract that lambda
+
+#------------------------------#
+
+#Oxygen.Filler
+Box = boxcox(beverages_v3$Oxygen.Filler ~ 1,     # Transform PSC Column as a single vector
+             lambda = seq(-6,6,0.1)              # Try values -6 to 6 by 0.1
+             )
+
+Cox = data.frame(Box$x, Box$y)            # Create a data frame with the results
+
+Cox2 = Cox[with(Cox, order(-Cox$Box.y)),] # Order the new data frame by decreasing y
+
+Cox2[1,]                                  # Display the lambda with the greatest
+                                          #    log likelihood
+
+
+lambda.Oxygen_Filler = Cox2[1, "Box.x"]                 # Extract that lambda
+
+
+rm(offset)
+```
+
+
+
+The lambda for predictor PSC is `r unname(lambda.PSC)`
+The lambda for predictor PSC.FIL is `r unname(lambda.PSC_Fill)`
+The lambda for predictor PSC.CO2 is `r unname(lambda.PSC_CO2)` 
+The lambda for predictor Oxygen.Filler is `r unname(lambda.Oxygen_Filler)`
+
+```{r, boxcox appied, message=FALSE, warning=FALSE}
+
+# Transform the original data
+beverages_v3$PSC = (beverages_v3$PSC ^ lambda.PSC - 1)/lambda.PSC  
+beverages_v3$PSC.Fill = (beverages_v3$PSC.Fill ^ lambda.PSC_Fill - 1)/lambda.PSC_Fill  
+beverages_v3$PSCT.CO2 = (beverages_v3$PSC.CO2 ^ lambda.PSC_CO2 - 1)/lambda.PSC_CO2  
+beverages_v3$Oxygen.Filler = (beverages_v3$Oxygen.Filler ^ lambda.Oxygen_Filler - 1)/lambda.Oxygen_Filler
+
+
+#rm(Box,Cox,Cox2,lambda.Oxygen_Filler,lambda.PSC_CO2,lambda.PSC_Fill,lambda.PSC)
+```
+
+
+These complete the transformation on the data set, any additional transformations will be performed in the building model phase as they will be model dependent.  
+
+```{r plot transformed data, message=FALSE, warning=FALSE}
+HistogramContinuous(beverages_v3)
+
+```
+
+##Categorical Response (Ph)  
+
+Our goal is to build a model that accurately predicts pH levels given a large number of factors. Based on pH values of common substances (https://en.wikipedia.org/wiki/PH), values below 8 indicate higher levels of acidity than pH values above 8. Since we have many factors that may influence alkalinity but not many observations, we chose to use a random forest model to classify observations.
+
+To this end, a categorical model will be built using data that has been imputed of missing values. Further, blank spaces in the variable Brand.Code were replaced with 'U' for known. Highly correlated variables were dropped and the data was also transformed to address problems related to skewness in the distribution of certain variables.
+
+Since the minimum pH value in our data is 7.88 and most pH values are greater than 8 with a mean value of 8.546 and a max value of 9.360, we have bucketed values below or equal to 8.5 as "Neutral" and values above 8.5 as "Alkaline". As such, our goal is to accurately predict whether or not a beverage is more likely to be alkaline or neutral given a plethora of potentially influential factors.
+
+In the original data, we have 2,571 observations. In order to create a predictive model, we will split the data into training and test sets based on a 70/30 percent split. After splitting the data, we have 1,799 observations across 39 factors in the training data and 772 observations across 39 factors in the test data.
+
+```{r Categorical Ph Dataset, message=FALSE, warning=FALSE}
+
+beverages_v4 <- beverages_v1
+
+beverages_v4$PH <- ifelse(beverages_v4$PH <= 8.5, "Neutral", "Alkaline")
+beverages_v4$PH <- factor(beverages_v4$PH )
+beverages_v4$Brand.Code <- factor(beverages_v4$Brand.Code) 
+
+```
+
+
+# Model Buidlings  
+
+We will explore and build various model to identify the most significant variable that influence the pH and be able to predict pH values.  
+
+## Data Splitting 
+
+We have 4 versions of the data set that we will use to based our models. Additional transformations such as scaling and centering may be also applied at the time of model building;
+
+* version 1; Imputed data set, with brand.code missing values (Blank) imputed as 'U'  
+* version 2; based on version 1, with additional features and dropped highly correlated variables
+* version 3; based on version 2, with box-cox transformations applied to very skewed variables 
+* version 4: based on version 1, with converting PH to categorical variable (Neutral, Alkaline)  
+
+```{r Data Splitting, message=FALSE, warning=FALSE}
+
+# Where Imputed data is the dataset such as beverages_v1
+set.seed(143) 
+sample = sample.int(n = nrow(beverages), size = floor(.70*nrow(beverages)), replace = F)
+
+beverages_v1_train = beverages_v1[sample, ]
+beverages_v1_test  = beverages_v1[-sample,]
+
+beverages_v2_train = beverages_v2[sample, ]
+beverages_v2_test  = beverages_v2[-sample,]
+
+beverages_v3_train = beverages_v3[sample, ]
+beverages_v3_test  = beverages_v3[-sample,]
+
+beverages_v4_train = beverages_v4[sample, ]
+beverages_v4_test  = beverages_v4[-sample,]
+
+rm(beverages_v1,beverages_v2,beverages_v3,beverages_v4,beverages,sample)
+```
+
+```{r parallel, message=FALSE, warning=FALSE}
+
+# Set-up parallel Enviroment to increase performance
+Mycluster =makeCluster(detectCores()-1)
+registerDoParallel(Mycluster)
+
+myControl = trainControl(method = 'cv', number = 5, 
+  verboseIter = FALSE, savePredictions = TRUE,allowParallel = T)
+
+```
+
+
+## Generalized Linear Model (GLM)
+```{r Model GLM, message=FALSE, warning=FALSE}
+# first, start with a general linear model 
+set.seed(143)
+GLM_M1_Data1 = train(PH ~ ., data = beverages_v1_train , metric = 'RMSE', method = 'glm',preProcess = c('center', 'scale'), trControl = myControl)
+GLM_M1_Data1
+
+set.seed(143)
+GLM_M2_Data2 = train(PH ~ ., data = beverages_v2_train , metric = 'RMSE', method = 'glm', trControl = myControl)
+GLM_M2_Data2
+
+set.seed(143)
+GLM_M3_Data3 = train(PH ~ ., data = beverages_v3_train, metric = 'RMSE', method = 'glm', trControl = myControl)
+GLM_M3_Data3
+```
+
+## Generalized Linear Model with Lasso and Ridge Regression (glmnet)
+```{r Model glmnet, message=FALSE, warning=FALSE}
+# next, we'll try a glmnet model which combines lasso and ridge regression 
+set.seed(143)
+glmnet_M1_Data1 = train(PH ~ ., data = beverages_v1_train , metric = 'RMSE', method = 'glmnet',preProcess = c('center', 'scale'), trControl = myControl)
+glmnet_M1_Data1
+
+set.seed(143)
+glmnet_M2_Data2 = train(PH ~ ., data = beverages_v2_train , metric = 'RMSE', method = 'glmnet', trControl = myControl)
+glmnet_M2_Data2
+
+set.seed(143)
+glmnet_M3_Data3 = train(PH ~ ., data = beverages_v3_train, metric = 'RMSE', method = 'glmnet', trControl = myControl)
+glmnet_M3_Data3
+
+```
+
+## Random Forest Model One (ranger)
+```{r Model ranger, message=FALSE, warning=FALSE}
+#  random forest just for fun
+set.seed(143)
+ranger_M1_Data1 = train(PH ~ ., data = beverages_v1_train, metric = 'RMSE', method = 'ranger',preProcess = c('center', 'scale'),trControl = myControl)
+ranger_M1_Data1
+
+set.seed(143)
+ranger_M2_Data2 = train(PH ~ ., data = beverages_v2_train, metric = 'RMSE', method = 'ranger',trControl = myControl)
+ranger_M2_Data2
+
+set.seed(143)
+ranger_M3_Data3 = train(PH ~ ., data = beverages_v3_train, metric = 'RMSE', method = 'ranger',trControl = myControl)
+ranger_M3_Data3
+```
+
+## Partial Least Squares (PLS)
+
+Since we observed correlation between the predictors variables, we will consider building a Partial Least Square model.  
+
+```{r Model pls, message=FALSE, warning=FALSE}
+
+set.seed(143)
+pls_M1_Data1 = train(PH ~ ., data = beverages_v1_train, metric = 'RMSE', method ='pls', preProcess = c('center', 'scale'), tunelength = 15, trControl = myControl)
+pls_M1_Data1
+
+set.seed(143)
+pls_M2_Data2 = train(PH ~ ., data = beverages_v2_train, metric = 'RMSE', method ='pls',  tunelength = 15, trControl = myControl)
+pls_M2_Data2
+
+set.seed(143)
+pls_M3_Data3 = train(PH ~ ., data = beverages_v3_train, metric = 'RMSE', method ='pls',  tunelength = 15, trControl = myControl)
+pls_M3_Data3
+
+```
+
+## Support Vector Machine Model (SVM)
+```{r Model svmRadial, message=FALSE, warning=FALSE}
+
+set.seed(143)
+svmRadial_M1_Data1 =train(PH~.,beverages_v1_train, metric = 'RMSE', method = "svmRadial",preProc =c("center", "scale"),tuneLength = 14, trControl = myControl)
+svmRadial_M1_Data1
+
+set.seed(143)
+svmRadial_M2_Data2 =train(PH~.,beverages_v2_train, metric = 'RMSE', method = "svmRadial",tuneLength = 14, trControl = myControl)
+svmRadial_M2_Data2
+
+set.seed(143)
+svmRadial_M3_Data3 =train(PH~.,beverages_v3_train, metric = 'RMSE', method = "svmRadial",tuneLength = 14, trControl = myControl)
+svmRadial_M3_Data3
+#plot(svmRadial_M1_Data1, scales = list(x=list(log=2)))
+```
+
+## Random Forest Modle Two (RF)
+```{r rf, message=FALSE, warning=FALSE}
+
+control_forest = trainControl(method="repeatedcv", number=5, repeats=2, search="random", allowParallel = T)
+mtry = sqrt(ncol(beverages_v1_train))
+
+
+set.seed(143)
+rf_M1_Data1 = train(PH~., data=beverages_v1_train, metric = 'RMSE' , method="rf", tuneLength=5, importance=T, trControl=control_forest)
+rf_M1_Data1
+
+mtry = sqrt(ncol(beverages_v2_train))
+
+set.seed(143)
+rf_M2_Data2 = train(PH~., data=beverages_v2_train, metric = 'RMSE' , method="rf", tuneLength=5, importance=T, trControl=control_forest)
+rf_M2_Data2
+
+mtry = sqrt(ncol(beverages_v3_train))
+set.seed(143)
+rf_M3_Data3 = train(PH~., data=beverages_v3_train, metric = 'RMSE' , method="rf", tuneLength=5, importance=T, trControl=control_forest)
+rf_M3_Data3
+
+rm(control_forest,mtry)
+```
+
+
+## K-Nearest Neighbor Model (knn)  
+```{r knn, message=FALSE, warning=FALSE}
+
+set.seed(143)
+knn_M1_Data1 <- train(PH ~ .,
+             method     = "knn",
+             tuneGrid   = expand.grid(k = 1:10),
+             trControl  = myControl,
+             metric     = "RMSE",
+             data       = beverages_v1_train,preProc =c("center", "scale"))
+knn_M1_Data1
+
+set.seed(143)
+knn_M2_Data2 <- train(PH ~ .,
+             method     = "knn",
+             tuneGrid   = expand.grid(k = 1:10),
+             trControl  = myControl,
+             metric     = "RMSE",
+             data       = beverages_v2_train)
+knn_M2_Data2
+
+set.seed(143)
+knn_M3_Data3 <- train(PH ~ .,
+             method     = "knn",
+             tuneGrid   = expand.grid(k = 1:10),
+             trControl  = myControl,
+             metric     = "RMSE",
+             data       = beverages_v3_train)
+knn_M3_Data3
+```
+
+
+## Random Forest Classification Model
+
+Using the 'randomForest' and 'caret' packages, we applied k-fold cross validation on the training set, fitting the random forest model to 10 random samples of the training set and taking the average.  
+
+```{r rf Classification, message=FALSE, warning=FALSE}
+
+Control_rf_c = trainControl(method = "cv", number = 10, allowParallel = TRUE, verboseIter = FALSE)
+
+set.seed(143)
+
+rf_M4_Data4 = train(PH ~ ., data = beverages_v4_train, method = "rf", prox = FALSE, trControl = Control_rf_c)
+rf_M4_Data4
+
+rm(Control_rf_c)
+
+```
+ 
+
+```{r End parallel, message=FALSE, warning=FALSE}
+
+stopCluster(Mycluster)
+registerDoSEQ()
+``` 
+
+
+From the results of the cross validated model above, we can see that model accuracy was above 80 percent. From the confusion matrix below, we can see that overall accuracy of the model was 82.64 percent with a 95 percent confidence interval between 79.78 percent and 85.25 percent, sensitivity of 90.57 percent and specificity of 69.01 percent.
+
+
+```{r rf_classification accuracy measurement, message=FALSE, warning=FALSE}
+
+test <- predict( rf_M4_Data4, newdata = beverages_v4_test)
+cf <- confusionMatrix(data = test,  beverages_v4_test$PH)
+print(cf, digits = 4)
+
+
+# Concept importance for model
+varImp(rf_M4_Data4, top = 10)
+
+dotPlot(varImp(rf_M4_Data4), top=10)
+```
+
+# Model Selection, Insterpretation, & Evaluation 
+
+## Selecting Best Model  
+
+We have build various models, linear regression ones and nonlinear regression ones.  We will now evaluate each on the test data sets. Best on the results, we will select the best performing model. The following criteria will be considered for the selection:  
+
+* Accuracy (how accurately the model performed, evaluated using RMSE and MAE)
+* Rsquared 
+* MAE  
+* Scalability (as measure by run time)   
+* interpretability    
+
+```{r Models Comparaison, message=FALSE, warning=FALSE}
+
+# compare models
+models_list = list("glm_D1" = GLM_M1_Data1, "glm_D2" = GLM_M2_Data2, "glm_D3" = GLM_M3_Data3, 
+                   "glmnet_D1" = glmnet_M1_Data1, "glmnet_D2" = glmnet_M2_Data2, "glmnet_D3" = glmnet_M3_Data3, 
+                   "ranger_D1"= ranger_M1_Data1, "ranger_D2" = ranger_M2_Data2, "ranger_D3" = ranger_M3_Data3, 
+                   "pls_D1"= pls_M1_Data1, "pls_D2" = pls_M2_Data2, "pls_D3" = pls_M3_Data3, 
+                   "SVM_D1" = svmRadial_M1_Data1, "SVM_D2" = svmRadial_M2_Data2, "SVM_D3" = svmRadial_M3_Data3, 
+                  # "rf_D1" = rf_M1_Data1, "rf_D2" = rf_M2_Data2, "rf_D3" = rf_M3_Data3,
+                   "knn_D1" = knn_M1_Data1, "knn_D2" = knn_M2_Data2, "knn_D3" = knn_M3_Data3)
+
+resamps = resamples(models_list) 
+
+dotplot(resamps, metric = 'RMSE')
+
+dotplot(resamps, metric = 'Rsquared')
+
+summary(resamps)
+```
+
+We will now compute a matrix for summarize all the models and metrics. We will evaluate the models on the test data and compare the results.
+
+```{r Models Comparaison Matrix, message=FALSE, warning=FALSE}
+
+predictAndMeasure <- function(model, model.label, testData, ytest, score_interpretability, grid = NULL) {
+ 
+  #mesure prediction time
+  ptm <- proc.time()
+  # Predict Model on Test Date set
+  pred <- predict(model, testData)
+  tm <- proc.time() - ptm
+  
+  post<- postResample(pred = pred, obs = ytest)
+  RMSE.test <- c(post[[1]])
+  RSquared.test <- c(post[[2]])
+  MAE.test <- c(post[[3]])
+  
+  perf.grid = NULL
+  if (is.null(grid)) { 
+    perf.grid = data.frame(predictor = c(model.label) ,  RMSE = RMSE.test , RSquared = RSquared.test, MAE = MAE.test, time = c(tm[[3]]), interpretability = c(score_interpretability))
+  } else {
+    .grid = data.frame(predictor = c(model.label) , RMSE = RMSE.test , RSquared = RSquared.test, MAE = MAE.test, time = c(tm[[3]]), interpretability = c(score_interpretability))
+    perf.grid = rbind(grid, .grid)
+  }
+  
+  perf.grid
+}
+
+
+#Prediction for glm 
+performance.grid <- predictAndMeasure (GLM_M1_Data1, "glm_D1", beverages_v1_test, beverages_v1_test$PH, 3, grid=NULL)
+performance.grid <- predictAndMeasure (GLM_M2_Data2, "glm_D2", beverages_v2_test, beverages_v2_test$PH, 2, grid=performance.grid)
+performance.grid <- predictAndMeasure (GLM_M3_Data3, "glm_D3", beverages_v3_test, beverages_v3_test$PH, 1, grid=performance.grid)
+
+#Prediction for glmnet
+performance.grid <- predictAndMeasure (glmnet_M1_Data1, "glmnet_D1", beverages_v1_test, beverages_v1_test$PH, 3, grid=performance.grid)
+performance.grid <- predictAndMeasure (glmnet_M2_Data2, "glmnet_D2", beverages_v2_test, beverages_v2_test$PH, 2, grid=performance.grid)
+performance.grid <- predictAndMeasure (glmnet_M3_Data3, "glmnet_D3", beverages_v3_test, beverages_v3_test$PH, 1, grid=performance.grid)
+
+#Prediction for ranger
+performance.grid <- predictAndMeasure (ranger_M1_Data1, "ranger_D1", beverages_v1_test, beverages_v1_test$PH, 3, grid=performance.grid)
+performance.grid <- predictAndMeasure (ranger_M2_Data2, "ranger_D2", beverages_v2_test, beverages_v2_test$PH, 2, grid=performance.grid)
+performance.grid <- predictAndMeasure (ranger_M3_Data3, "ranger_D3", beverages_v3_test, beverages_v3_test$PH, 1, grid=performance.grid)
+
+#Prediction for pls
+performance.grid <- predictAndMeasure (pls_M1_Data1, "PLS_D1", beverages_v1_test, beverages_v1_test$PH, 3, grid=performance.grid)
+performance.grid <- predictAndMeasure (pls_M2_Data2, "PLS_D2", beverages_v2_test, beverages_v2_test$PH, 2, grid=performance.grid)
+performance.grid <- predictAndMeasure (pls_M3_Data3, "PLS_D3", beverages_v3_test, beverages_v3_test$PH, 1, grid=performance.grid)
+
+#Prediction for SVM
+performance.grid <- predictAndMeasure (svmRadial_M1_Data1, "SVM_D1", beverages_v1_test, beverages_v1_test$PH, 3, grid=performance.grid)
+performance.grid <- predictAndMeasure (svmRadial_M2_Data2, "SVM_D2", beverages_v2_test, beverages_v2_test$PH, 2, grid=performance.grid)
+performance.grid <- predictAndMeasure (svmRadial_M3_Data3, "SVM_D3", beverages_v3_test, beverages_v3_test$PH, 1, grid=performance.grid)
+
+#Prediction for rf
+performance.grid <- predictAndMeasure (rf_M1_Data1, "rf_D1", beverages_v1_test, beverages_v1_test$PH, 3, grid=performance.grid)
+performance.grid <- predictAndMeasure (rf_M2_Data2, "rf_D2", beverages_v2_test, beverages_v2_test$PH, 2, grid=performance.grid)
+performance.grid <- predictAndMeasure (rf_M3_Data3, "rf_D3", beverages_v3_test, beverages_v3_test$PH, 1, grid=performance.grid)
+
+#Prediction for knn
+performance.grid <- predictAndMeasure (knn_M1_Data1, "knn_D1", beverages_v1_test, beverages_v1_test$PH, 3, grid=performance.grid)
+performance.grid <- predictAndMeasure (knn_M2_Data2, "knn_D2", beverages_v2_test, beverages_v2_test$PH, 2, grid=performance.grid)
+performance.grid <- predictAndMeasure (knn_M3_Data3, "knn_D3", beverages_v3_test, beverages_v3_test$PH, 1, grid=performance.grid)
+
+
+kable(performance.grid[order(performance.grid$RMSE, decreasing=F),])
+
+
+```
+
+From the summary table, we observed that the random forest models (ranger_D1 and rf_D1) are better performing based on RMSE, MAE, and RSquared values.  They are both built on a data set with no transformation which allow for better interpretability of the model. 
+
+The model is meant to be "productionalized" and application will be built to monitor the manufacturing process, this will require the model to be scalable and operate on large amount of data. Due to this requirement, we will select rf_D1 model.  
+
+
+## Interpretation of selected model
+
+The analysis of the variable importance and decision tree of the selected random forest model is given below.
+
+```{r Variables Importance, message=FALSE, warning=FALSE}
+
+# variable importance 
+var.imp <- varImp(rf_M1_Data1)
+
+#graph importance
+
+plot(var.imp, main = "Variable Importance", cex=.5)
+#(barplot(unlist(var.imp$importance/sum(var.imp$importance)),names.arg=row.names(var.imp$importance)))
+
+
+# decision tree of final random forest model  
+getTree(rf_M1_Data1$finalModel, labelVar = T)
+
+# revisit glmnet model to compare coefficient values with random forest splits 
+myControl <- trainControl(method = 'cv', number = 5, verboseIter = FALSE, savePredictions = TRUE)
+
+model_glmnet = train(PH ~ ., data = beverages_v1_train, metric = 'RMSE', method = 'glmnet', 
+                       preProcess = c('center', 'scale'), trControl = myControl)
+
+coef(model_glmnet$finalModel, model_glmnet$bestTune$lambda)
+
+```
+
+The model's decision tree is consistent with the the variable importance output. 
+The first node of the tree is Mnf.Flow with a split point of about -50, which seems to be separating valid vs. invalid (-100) Mnf.Flow values. The records with invalid Mnf.Flow values seem to have higher pH values.
+
+The first node on the left branch is Brand.Code4, which equates to Brand.Code "C". Here, it seems that records with Brand.Code "C" have lower pH values. The first node on the right branch is Brand.Code5, which equates to Brand.Code "D" and is associated with higher pH values.
+
+These positive/negative associations between pH and the important variables are consistent with the coefficients from an earlier glmnet model, which while not as accurate in terms of RMSE does produce much more interpretable results. 
+
+On a centered and scaled basis, the variables that most increased pH were Balling.Lvl and Carb.Pressure1, and the variables that most decreased pH were Mnf.Flow and Brand.Code "C".
+
+```{r Variables Importance plots, fig.height=10, fig.width=10, message=FALSE, warning=FALSE}
+
+varImpPlot(rf_M1_Data1$finalModel, type = 1, main = "Mean Decrease Accuracy") # graph 1 MSE
+
+varImpPlot(rf_M1_Data1$finalModel, type = 2, main = "Node Purity") # graph 2 RSS
+```
+
+Graph1 above shows that if a variable is assigned values by random permutation, how much the mean squared error (MSE) will increase. In this case, if you randomly permute Mnf.Flow, MSE will increase by 60% on average.  
+
+Graph2 above shows Node purity which is measured by the Gini index which is the difference between residual sum of squares (RSS) before and after the split on that particular variable. So, IncNodePurity measures decrease in node impurities from splitting on the variable, averaged across all trees.  
+
+## Evaluation  
+
+### Evaluation Data set and required tranformations  
+
+We will load the evaluation data set and performed the necessary data transformation to run our selected model.  
+
+```{r Evaluation_DataSet, message=FALSE, warning=FALSE}
+
+#set file name - to be change by github link#
+beverages_filename_eval<- "https://raw.githubusercontent.com/vbriot28/Data624_Group1_FinalProject/master/StudentEvaluation-%20TO%20PREDICT.csv"
+
+# Load Evaluation Data Set
+beverages_eval <-read.csv(beverages_filename_eval, header=TRUE, sep=",",stringsAsFactors = F)
+
+```
+
+Based on our selected model, we only need to impute the data and converting any "unspecified" Brand code as "U", we will first check whether this is a required steps but checking for missing data.  
+
+```{r missing_data_evaluation, message=FALSE, warning=FALSE}
+
+PlotMissing(beverages_eval)
+```
+
+We will impute the missing values for all our predictors.  
+
+```{r Data Set Evaluation Impute, message=FALSE, warning=FALSE}
+
+beverages_eval$Brand.Code[beverages_eval$Brand.Code==""]= "U"
+
+beverages_eval_predictor <-beverages_eval
+beverages_eval_predictor$PH <- NULL
+
+mice_imputes_eval <- mice(beverages_eval_predictor, m = 2, maxit = 2, print = FALSE,seed = 143)
+
+beverages_eval_v1 <- complete(mice_imputes_eval)
+beverages_eval_v1$PH <- beverages_eval$PH
+```
+
+We will now predict PH using our selected model, the result will be written in a .csv file.  
+
+```{r Evaluation, message=FALSE, warning=FALSE}
+
+prediction_rf <- predict(rf_M1_Data1, beverages_eval_v1)
+
+hist(prediction_rf, main = "Distribution of Predicted pH")
+
+beverages_eval_v1$PredictedPH <- prediction_rf
+
+write.csv(beverages_eval_v1, file = "prediction_rf1.csv")
+```
+
+
+# Conclusion  
+
+The most accurate models discovered were the random forest models. The selected model used untransformed data input and a faster procesing time, making it more operationally attactive.  
+The selected model's results indicate that the cheif driving factors influencing PH are the Balling.Level, Carb.Pressure1, 
+
+
+# References:  
+**EDA**  
+https://cran.r-project.org/web/packages/DataExplorer/vignettes/dataexplorer-intro.html  
+
+**Data Transformation**  
+https://www.r-bloggers.com/near-zero-variance-predictors-should-we-remove-them/
+http://rcompanion.org/handbook/I_12.html
+
+**Model Selection**
+https://rpubs.com/Isaac/caret_reg

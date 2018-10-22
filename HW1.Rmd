@@ -1,0 +1,694 @@
+---
+title: "Predictive Analytic HW1"
+author: "Cheryl Bowersox"
+date: "Saturday, March 10, 2018"
+output: word_document
+---
+
+
+```{r message=FALSE}
+suppressWarnings(library(fma))
+suppressWarnings(library(fpp))
+suppressWarnings(library(forecast))
+
+```
+
+#HA 2.1
+(a)  Plot monthly total of people unemployed benefits in Australia  (Jan 1965 - Jul 1992)
+The data used is the 'dole' ts data set from the fma package
+```{r}
+#info about dole
+
+class(dole)
+summary(dole)
+head(dole)
+
+plot(dole, main="People recieving unemployment benfits in Austrailia")
+```
+First examination of a  simple plot of the data shows two a overall upward trend, but appears to have some possibly seasonal variance as well. There were dramatic increases around 1975 and 1982, with a decrease in 1990 roughly corresponding to the change in 1982.  
+
+Because of the large variability in the data of  `r sd(dole)` a Box-Cox transformation may be appropriate
+This transformed allows for better visualization of the earlier years, and demonstrated that they also had rather dramatic swings at points (such as the early and mid 1960's) that were not readily apparent in the transformed data. Then negative aspect of presenting the data this way is that it does not demonstrate quite as clearly the drastic nature of the changes after 1975. 
+```{r message=FALSE}
+lambda <- BoxCox.lambda(dole) #.33
+boxdole <- BoxCox(dole,lambda)
+
+```
+
+
+(b) Plot the monthly total accidental deaths in the US using (Jan 1965 - Jul 1992)
+The data used is the 'dole' ts data set from the fma package
+```{r}
+#info about dole
+
+summary(usdeaths)
+head(usdeaths)
+
+plot(usdeaths, main="US Accidental Deaths by Month")
+seasonplot(usdeaths,ylab="US Accidental Deaths",xlab="Year", main="Seasonal plot: US Accidental Deaths",year.labels=TRUE, year.labels.left=TRUE, col=1:20, pch=19)
+
+```
+The simple plot of the data shows no apparent overall trend, but has a dramatic seasonal variance. 
+The seasonal plot shows the lowest points in Feb and the highest in July, a result that makes intuitive sense as people tend to be engaged in more risky recreation in the summer months.  
+
+(c) Plot the quarterly brick production (millions) at Portland, Australia  1956-1994.
+The data used is the 'bricks' ts data set from the fma package
+```{r}
+#info about bricks
+
+summary(bricksq)
+head(bricksq)
+
+plot(bricksq, main="Brick production by Quarter")
+seasonplot(bricksq,ylab="US Accidental Deaths", xlab="Year", main="Seasonal plot: Quarterly Brick Production",year.labels=TRUE, year.labels.left=TRUE, col=1:20, pch=19)
+
+
+```
+The simple plot of the quarterly brick data shows an overall increasing trend, and has a quarterly variance, always showing the decrease production in Q1, and generally slightly lower in Q4. This makes sense as Q1 has fewer days than other months, and holidays or shutdowns are more likely in Q4 and Q1. 
+
+If we are interested in the general overall performance over time, an average per year may be more appropriate. Another option would be to calculate the number of workdays per quarter, subtracting holidays, and plot the average production per workday.
+Plotting the average per year gives us the following: 
+
+```{r message=FALSE}
+as.year <- function(z) as.integer(as.yearmon(z))
+plot(as.year(bricksq), main="Brick production by Year")
+```
+
+##HW Problem 2.3
+Examine IBM Stock prices (ibmclose) by day, create test and forecast data, and evaluate forecasting methods.
+
+```{r message=FALSE}
+plot(ibmclose)
+summary(ibmclose)
+str(ibmclose)
+```
+The data appears to be a daily close for just over a full year, but is not by date so is difficult to produce a seasonal/monthly view. There are some significant turns in price that may correspond to quarterly results, and a very sharp decline during the mid 200's.  
+
+Looking at the auto-correlation plot in the data with different lag times shows the strongest correlation with a lag of 1 day, and gets less and less correlated the longer the lag.  This indicates the prior day price may be a good indicator of future prices, but the further out a forecast is done the less reliable this will be. 
+
+```{r message=FALSE}
+ibmclose2 <- window(ibmclose, start =1, end = 369-1)
+lagdays <- c(1,2, 3, 5, 10, 15, 20, 30,40)
+lag.plot(ibmclose2, lags = 9, set.lags = lagdays, do.lines = FALSE)
+
+```
+Splitting the data into training and test sets, keeping the first 300 observations to develop the model and the remaining 69 to evaluate. 
+The mean,naive and drift models were evaluated. 
+```{r message=FALSE}
+ibmtrain <- window(ibmclose, start = 1, end = 300)
+ibmtest <- window(ibmclose, start = 301, end = 369)
+ibmmean <- meanf(ibmtrain, h=69)
+ibmnaive <- naive(ibmtrain, h =69)
+ibmdrift <- rwf(ibmtrain, h=69, drift = TRUE)
+
+# accuracy of models
+
+
+round(accuracy(ibmmean, ibmtest),2)
+round(accuracy(ibmnaive, ibmtest),2)
+round(accuracy(ibmdrift, ibmtest),2)
+
+
+plot(ibmtrain,main="Forecasts IBM close prices",xlim=c(2,370))
+lines(ibmtest,col=6)
+lines(ibmmean$mean,col=2)
+lines(ibmnaive$mean,col=3)
+lines(ibmdrift$mean,col=4)
+legend("topright", lty=1, col=c(2,3,4,6),cex = .75, legend=c("Mean method","Naive method","Drift Method","Actual"))
+```
+From both the graph and evaluating the numerical accuracy of the model, it appears the drift method provides the best forecast for this data. 
+
+
+
+##HW Problem 6.2
+Working with the monthly sales in thousands in data set 'plastics'.  There are 60 monthly observations over 5 years
+
+(a) 
+Plotting the data shows a definite seasonal trend, but and an apparent overall increasing trend. 
+```{r message=FALSE}
+str(plastics)
+plastics
+summary(plastics)
+plot(plastics,main="monthly plastic produciton")
+seasonplot(plastics, main = "seasonal plot of plastic production")
+
+```
+(b) 
+Using classical multiplicative decomposition the seasonal and trend component are given by the below, showing a distinct pattern by season and overall increasing trend. . 
+```{r message=FALSE}
+cmdplastic <-decompose(plastics, type = "multiplicative")
+#seasonal
+round(cmdplastic$seasonal[1:12]/10,3)
+#trend
+round(cmdplastic$trend)
+plot(cmdplastic)
+```
+(c) These result support what is seen in the general plot, but the overall tend is much more apparent. 
+(d) computing the seasonally adjusted data gives the following:
+```{r message=FALSE}
+adjplastics <- plastics/cmdplastic$seasonal
+plot(adjplastics, main="seasonally adjusted plastic production")
+```
+(e) Changing one point, #22, to an outlier by adding 600 to the does not dramatically change the overall trend if we apply the previously calculated seasonal adjusted trend. However if we recalculate the seasonal adjustment, the new trend is greatly impacted.  This indicates that this method does not handle dramatic variations well.  
+```{r message=FALSE}
+plastics2 <- plastics
+plastics2[22] <- 600
+adjplastics2 <- plastics2/cmdplastic$seasonal
+
+plot(adjplastics2, main="seasonally adjusted with outlier")
+#calc new seasonal adjustment
+cmdplastic2 <- decompose(plastics2,type = "multiplicative")
+plot(plastics2/cmdplastic2$seasonal, main = "recalc of seasonal adjust with outlier")
+```
+(f) Changing the outlier to the end of the series in position 58 rather than the middle, and applying the seasonal adjustment calculated on the old data gives a similar trend as the other, it does not seem to make much impact.  
+```{r message=FALSE}
+plastics3 <- plastics
+plastics3[58] <- 600
+adjplastics3 <- plastics3/cmdplastic$seasonal
+
+plot(adjplastics3, main="seasonally adjusted with outlier at end")
+#calc new seasonal adjustment
+cmdplastic3 <- decompose(plastics3,type = "multiplicative")
+plot(plastics3/cmdplastic3$seasonal, main = "recalc of seasonal adjust outlier at end")
+
+```
+(g) Using a random walk and drift to create a forecast of the seasonally adjusted data gives
+```{r message=FALSE}
+rwfplastics <- rwf(adjplastics, drift = TRUE)
+plot(rwfplastics, main="random walk with drift seasonal adj forecast")
+```
+
+(h)recalculating the forecast to include the seasonal adjustments
+```{r message=FALSE}
+
+#seasonal forecast using naive method
+
+
+stlplastics <- stl(plastics, s.window = "periodic")
+fcst <- forecast(stlplastics, method = "naive")
+plot(fcst)
+# or manually:
+#fcst2 <- forecast(cmdplastic$seasonal)
+#fcst1 <- forecast(rwfplastics,method = "rwf")
+#fcstman <- fcst2$x*fcst1$x
+#plot(forecast(fcstman)
+```
+
+#
+##HW KJ 3.1
+Exploring glass classification data set using visualizations 
+```{r message=FALSE}
+library(mlbench)
+library(ggplot2)
+library(gridExtra)
+data(Glass)
+#data descriptions
+str(Glass)
+#data structure
+head(Glass) 
+
+#reviewing distribution of each data
+g1 <- ggplot(data = Glass, aes(x =Type, y=RI ))+
+  geom_boxplot(outlier.colour="red",
+                outlier.size=4)+ ggtitle("RI")
+
+g2 <- ggplot(data = Glass, aes(x =Type, y=Na ))+
+  geom_boxplot(outlier.colour="red",
+                outlier.size=4)+ ggtitle("Na")
+g3 <- ggplot(data = Glass, aes(x =Type, y=Mg ))+
+  geom_boxplot(outlier.colour="red",
+                outlier.size=4)+ ggtitle("Mg")
+g4 <- ggplot(data = Glass, aes(x =Type, y=Al ))+
+  geom_boxplot(outlier.colour="red",
+                outlier.size=4)+ ggtitle("Al")
+g5 <- ggplot(data = Glass, aes(x =Type, y=Si ))+
+  geom_boxplot(outlier.colour="red",
+                outlier.size=4)+ ggtitle("Si")
+
+g6 <- ggplot(data = Glass, aes(x =Type, y=K ))+
+  geom_boxplot(outlier.colour="red",
+                outlier.size=4)+ ggtitle("K")
+g7 <- ggplot(data = Glass, aes(x =Type, y=Ca ))+
+  geom_boxplot(outlier.colour="red",
+                outlier.size=4)+ ggtitle("Ca")
+g8 <- ggplot(data = Glass, aes(x =Type, y=Ba ))+
+  geom_boxplot(outlier.colour="red",
+                outlier.size=4)+ ggtitle("Ba")
+g9 <- ggplot(data = Glass, aes(x =Type, y=Fe ))+
+  geom_boxplot(outlier.colour="red",
+                outlier.size=4)+ ggtitle("Fe")
+
+grid.arrange(g1,g2,g3,g4,g5,g6,g7,g8,g9, ncol=3, top ="Box Plots for Glass Component")
+```
+
+
+
+```
+The density plots for the predictor variables show several that are skewed, include K, Ba, and Fe.  Mg looks like it may also be a bimodal distribution.  The others are approximately normally distributed.  
+
+Using box-plots it is apparent there are many outliers in the data, across all of the types and components.  Some of the most significant appear to be with the K, Ba and Fe components. 
+
+
+```{r message=FALSE}
+library(e1071)
+
+(skewval <- apply(Glass[,1:9], 2,skewness))
+
+```
+To help correct for the skewness, we can try to apply the Box-Cox transformations for these values.  
+```{r message=FALSE}
+TGlass<- Glass
+
+lambda <- BoxCox.lambda(Glass$K) #.06
+TGlass$K <- BoxCox(Glass$K,lambda)
+
+
+lambda <- BoxCox.lambda(Glass$Ba) #.088
+TGlass$Ba <- BoxCox(Glass$Ba,lambda)
+
+lambda <- BoxCox.lambda(Glass$Fe) #.131
+TGlass$Fe <- BoxCox(Glass$Fe,lambda)
+
+g1 <- ggplot(data = TGlass, aes(x =K) )+ 
+  geom_density(alpha = .2, fill = "003333")+
+  ggtitle("K Transformed")
+
+g2 <- ggplot(data = TGlass, aes(x =Ba) )+ 
+  geom_density(alpha = .2, fill = "003333")+
+  ggtitle("Ba Transformed")
+g3 <- ggplot(data = TGlass, aes(x =Fe) )+ 
+  geom_density(alpha = .2, fill = "003333")+
+  ggtitle("Fe Transformed")
+grid.arrange(g1,g2,g3, ncol=1, top ="Density Plots for Transformed Glass Component")
+```
+Reviewing this did not help much with the skewness, so attempting a log transformation on those with non-zero values. 
+```{r message=FALSE}
+TGlass$K <-log(Glass$K+1)
+
+TGlass$Ba <- log(Glass$Ba+1)
+
+TGlass$Fe <- log(Glass$Fe+1)
+
+g1 <- ggplot(data = TGlass, aes(x =K) )+ 
+  geom_density(alpha = .2, fill = "003333")+
+  ggtitle("K Transformed")
+
+g2 <- ggplot(data = TGlass, aes(x =Ba) )+ 
+  geom_density(alpha = .2, fill = "003333")+
+  ggtitle("Ba Transformed")
+g3 <- ggplot(data = TGlass, aes(x =Fe) )+ 
+  geom_density(alpha = .2, fill = "003333")+
+  ggtitle("Fe Transformed")
+grid.arrange(g1,g2,g3, ncol=1, top ="Density Plots for Transformed Glass Component")
+
+# Skew values
+(skewval <- apply(TGlass[,1:9], 2,skewness))
+
+#reviewing outliers of each data after transformation
+g1 <- ggplot(data = TGlass, aes(x =Type, y=K))+
+  geom_boxplot(outlier.colour="red",
+                outlier.size=4)+ ggtitle("K")
+
+g2 <- ggplot(data = TGlass, aes(x =Type, y=Ba ))+
+  geom_boxplot(outlier.colour="red",
+                outlier.size=4)+ ggtitle("Ba")
+g3 <- ggplot(data = TGlass, aes(x =Type, y=Fe ))+
+  geom_boxplot(outlier.colour="red",
+                outlier.size=4)+ ggtitle("Fe")
+grid.arrange(g1,g2,g3, ncol=1, top ="Density Plots for Transformed Glass Component")
+```
+These transformations helped reduce the skewness of the data and also help to reduce some of the outliers.  
+
+```
+Reviewing the relationship of various components and their relationship with the Type variable shows a strong linear relationship between RI and several other elements, including CA, Si and Ai. This indicates these may not all be helpful in modeling the data.  
+```{r message=FALSE}
+pairs(TGlass[,1:9], col=Glass$Type)
+cor(TGlass[1:9], use="pairwise.complete" )
+
+```
+
+#HA 7.1
+
+Using the data set 'books' to forecast the next four days of book sales in hardcover and paperback
+
+(a) Plotting the series indicates there appears to be a general upward trend in both paperback and hardcover books towards the end of the month, and more variation in the hardcover sales, with the standard deviation of the paperback books give by `r sd(books[,1])` while the hardcovers have a standard deviation of `r sd(books[,2])`
+There are no obvious cycles in the data day-to-day, but the plot of cross correlation does show some correlation with a lag of day 3 and day 5. 
+```{r message=FALSE}
+#see data
+str(books)
+summary(books)
+books[1:5,]
+#general plots
+plot(books, main="Books by category")
+plot(books[,2] +books[,1], main= "Total books sold")
+hist(books, main = "Total books Sold frequency")
+hist(books[,1], main = "Paperback Books Frequency")
+hist(books[,2], main = "Hardcover Books Frequency")
+crosscor <- ccf(books[,1],books[,2], main="")
+
+```
+(b)
+Simple exponential smoothing with alpha set to .2 .5, and .7 shows that the higher levels of alpha have higher RMSE. The lower levels of alpha result in a smoother curve as it gives historical values more weight.  This works well if there are no seasonal components or obvious cyclical behavior, as it tends to smooth out the day-to-day variances. 
+
+
+```{r message=FALSE}
+#train and test
+btrain <- window(books[,1], end=26)
+btest <- window(books[,1], start=27)
+balpha2 <- ses(btrain, alpha=0.2, initial="simple", h=4)
+balpha5 <- ses(btrain, alpha=0.5, initial="simple", h=4)
+balpha7 <- ses(btrain, alpha =0.7, initial="simple", h=4)
+
+plot(balpha2, plot.conf=FALSE, ylab="Paperback Book Sales", xlab="day", main="", fcol="white", type="o")
+lines(fitted(balpha2), col="blue", type="o")
+lines(fitted(balpha5), col="red", type="o")
+lines(fitted(balpha7), col="green", type="o")
+lines(balpha2$mean, col="blue", type="o")
+lines(balpha5$mean, col="red", type="o")
+lines(balpha7$mean, col="green", type="o")
+lines(btest,col="orange", type = "o")
+legend("topleft",lty=1, col=c(1,"blue","red","green","orange"), c("data", expression(alpha == 0.2), expression(alpha == 0.5),expression(alpha == 0.7),"test"),pch=1,cex=.69)
+```
+
+(c) Finding the best possible alpha, which results in the lowest RMSE, was found by calculating the accuracy of all models with alpha set from .1 to .99 at .1 intervals. The best resulting alpha was found where at .22, whit a RMSE of 32, as shown below.  
+While the accuracy is slightly better than the .2 value, it is not a significant change. 
+```{r message=FALSE}
+
+#finding best alpha
+library(dplyr)
+alpha <- seq(.01, .99, by = .01)
+RMSE <- NA
+for(i in seq_along(alpha)) {
+  fit <- ses(btrain, alpha = alpha[i], h = 4)
+  RMSE[i] <- accuracy(fit, btest)[2,2]
+}
+df <- as.data.frame(cbind(alpha,RMSE))
+
+(alphamin <- df%>%filter(RMSE == min(RMSE)))
+
+plot(df)
+points(alphamin,col="red",pch=9)
+
+bestalpha <- alphamin[1,1]
+balpha <- ses(btrain, alpha=bestalpha, initial="simple", h=4)
+#plot
+plot(balpha, plot.conf=FALSE, ylab="Paperback Book Sales", xlab="day", main="", fcol="white", type="o")
+lines(fitted(balpha), col="blue", type="o")
+lines(balpha$mean, col="blue", type="o")
+lines(btest,col="red", type = "o")
+legend("topleft",lty=1, col=c(1,"blue","red"), 
+c("data", expression(alpha == .22), "test"),pch=1,cex=.65)
+
+#review accuracy
+#best alpha 
+(accuracy(balpha,btest))
+#.2 alpha
+(accuracy(balpha2,btest))
+#.5 alpha
+(accuracy(balpha5,btest))
+#.7 alpha
+(accuracy(balpha7,btest))
+```
+
+(d) Comparing the optimal method, letting the system choose the optimal initial point but using the alpha = .22 results in a smoother initial graph, but exactly the same predictions.The accuracy is similar as well, and while the training set error measures are smaller when using the optimal method, the test set measures are essentially the same, and there is not much to recommend this optimal method.  
+
+```{r message=FALSE}
+
+balphaO <- ses(btrain, alpha = .22,initial="optimal", h=4)
+#plot
+plot(balphaO, plot.conf=FALSE, ylab="Paperback Book Sales", xlab="day", main="", fcol="white", type="o")
+lines(fitted(balphaO), col="green", type="o")
+lines(balphaO$mean, col="green", type="o")
+lines(fitted(balpha), col="blue", type="o")
+lines(balpha$mean, col="blue", type="o")
+lines(btest,col="red", type = "o")
+legend("topleft",lty=1, col=c(1,"green","blue","red"), 
+c("data", "optimal",expression(alpha == .22), "test"),pch=1,cex=.65)
+
+#accuracy
+#best alpha - Simple
+(accuracy(balpha,btest))
+#best alpha - optimal
+  (accuracy(balphaO,btest))
+```
+(e)Repeating the above steps for the hardcover books, but first finding the optimal value for alpha of .29. 
+When compared against the optimal approach, the optimal model forecast accuracy metrics are slightly better than the simple model using the best alpha value.  
+
+```{r message=FALSE}
+btrain <- window(books[,2], end=26)
+btest <- window(books[,2], start=27)
+
+# find optimal level of alpha
+alpha <- seq(.01, .99, by = .01)
+RMSE <- NA
+for(i in seq_along(alpha)) {
+  fit <- ses(btrain, alpha = alpha[i], h = 4)
+  RMSE[i] <- accuracy(fit, btest)[2,2]
+}
+df <- as.data.frame(cbind(alpha,RMSE))
+
+(alphamin <- df%>%filter(RMSE == min(RMSE)))
+# plot  values of alpha
+plot(df)
+points(alphamin,col="red",pch=9)
+
+bestalpha <- alphamin[1,1]
+balpha <- ses(btrain, alpha=bestalpha, initial="simple", h=4)
+balpha2 <- ses(btrain, alpha=0.2, initial="simple", h=4)
+balphaO <- ses(btrain, alpha=bestalpha, initial="optimal", h=4)
+
+plot(balpha, plot.conf=FALSE, ylab="Paperback Book Sales", xlab="day", main="", fcol="white", type="o")
+lines(fitted(balpha), col="blue", type="o")
+lines(fitted(balpha2), col="red", type="o")
+lines(fitted(balphaO), col="green", type="o")
+lines(balpha$mean, col="blue", type="o")
+lines(balpha2$mean, col="red", type="o")
+lines(balphaO$mean, col="green", type="o")
+lines(btest,col="orange", type = "o")
+legend("topleft",lty=1, col=c(1,"blue","red","green","orange"), 
+c("data",expression(alpha == .29),expression(alpha == .2), "optimal", "test"),pch=1,cex=.65)
+
+# measuring accuracy
+#best alpha - Simple
+(accuracy(balpha,btest))
+#alpha .2 - simple
+(accuracy(balpha2,btest))
+#best alpha - optimal
+(accuracy(balphaO,btest))
+#best alpha - Simple
+(accuracy(balpha,btest))
+
+```
+
+
+##HA 7.3
+Experimenting with the hold function using egg prices from 1900 o 1993 in the data set 'eggs' 
+
+The data contains 94 observations of yearly prices of eggs, and overall decreasing trend. This data is separated into a training set of 75 observations, and test data of 18 observations.  
+```{r message=FALSE}
+
+#review of data
+str(eggs)
+summary(eggs)
+plot(eggs)
+
+#train and test data, 18 observations held as test data
+eggs.train <- window(eggs, end =1975 )
+eggs.test <- window(eggs, start = 1976)
+
+```
+
+Holding the alpha and beta as constant at .8 and .2 and comparing the hold methods with initial = optimal, the the damped model gives a better RMSE value than either the standard Holt method or the multiplicative damped method.  
+
+```{r message=FALSE}
+#applying holt's linear method without damping setting alpha to .8, beta to .2.  
+
+eggsfit1 <- holt(eggs.train, alpha=0.8, beta=0.2, intial = "optimal", h=100)
+eggsfit2 <- holt(eggs.train, alpha=0.8, beta=0.2, damped=TRUE, initial="optimal", h=100) 
+eggsfit3 <- holt(eggs.train, alpha=0.8, beta=0.2, damped=TRUE, exponential = "True",initial="optimal", h=100)
+#plot
+plot(eggs, type="o", ylab="Egg Sales", xlab="Year", 
+     fcol="white", plot.conf=FALSE)
+lines(fitted(eggsfit1), col="blue") 
+lines(fitted(eggsfit2), col="green")
+lines(fitted(eggsfit2), col="red")
+lines(eggsfit1$mean, col="blue", type="o")
+lines(eggsfit2$mean, col="green", type="o")
+lines(eggsfit3$mean, col="red", type="o")
+legend("topleft", lty=1, col=c("black","blue","green","red"), c("Data","Holt's linear trend","Additive Damped trend","Multiplicative Damped Trend"),cex=.5)
+
+# measuring accuracy
+#holt
+(accuracy(eggsfit1,eggs.test))
+#holt - damped
+(accuracy(eggsfit2,eggs.test))
+#holt damped,mutiplicative
+(accuracy(eggsfit3,eggs.test))
+```
+
+Calculating the optimal values for alpha and beta in the additive damped method gives a best ESS value when alpha = .85 and beta = .01
+
+```{r message=FALSE}
+
+# find optimal level of alpha in damped additive method, testing both alpha and beta
+alpha <- seq(.01, .99, by = .01)
+beta <- seq(.01, .99, by = .01)
+
+resSSE <- NA
+resalpha <- NA
+resbeta <- NA
+# search combo for alpha, beta
+options(show.error.messages = FALSE)
+for(i in seq_along(alpha)) {
+  #print(i)
+  for(j in seq_along(beta)) {
+    #print(j)
+    if (alpha[i] > beta[j]) {
+      try(fit <- holt(eggs.train, alpha=alpha[i], beta=beta[j], damped=TRUE, initial="optimal", h=100), silent = TRUE)
+      resSSE <- c(resSSE, sum(residuals(fit)^2))
+      resalpha <- c(resalpha, alpha[i])
+      resbeta <-c(resbeta, beta[j])
+      }
+    }
+  }
+options(show.error.messages = TRUE)
+df <- as.data.frame(cbind(resalpha,resbeta,resSSE))
+df <- df[complete.cases(df),]
+
+(optvalues <- df%>%filter(resSSE == min(resSSE)))
+alphamin <- optvalues[1,1]
+betamin <- optvalues[1,2]
+
+# plot  values of alpha
+plot(x=df[,1],y =df[,3],xlab="alpha", ylab = "SSE", main = "alpha values by ESS")
+points(x = alphamin,y =optvalues[1,3],col="red",pch=9)
+
+# plot  values of alpha
+plot(x=df[,2],y =df[,3],xlab="beta", ylab = "SSE", main = "Beta values by ESS")
+points(x = betamin,y =optvalues[1,3],col="red",pch=9)
+
+```
+Graphing the new values along with the standard values gives a very different view of the forecast.  The values .8 and.2 for alpha using the non-damped method (blue) is much more optimistic than the damped method using the optimized values (green). 
+
+The second (green) model using damped figures and optimized for alpha and beta produce a much better accuracy, resulting in values much close to the test data.  
+
+```{r message=FALSE}
+eggsfit1 <- holt(eggs.train, alpha=0.8, beta=0.2, intial = "optimal", h=100)
+eggsfito <- holt(eggs.train, alpha=alphamin, beta=betamin, intial = "optimal", h=100)
+
+plot(eggs, type="o", ylab="Egg Sales", xlab="Year", 
+     fcol="white", plot.conf=FALSE)
+lines(fitted(eggsfit1), col="blue") 
+lines(fitted(eggsfito), col="green")
+lines(eggsfit1$mean, col="blue", type="o")
+lines(eggsfito$mean, col="green", type="o")
+legend("topleft", lty=1, col=c("black","blue","green"), c("Data","Holts linear trend","Damped trend best values"),cex=.5)
+
+
+#accuracy
+#holt
+(accuracy(eggsfit1,eggs.test))
+#holt - damped
+(accuracy(eggsfito,eggs.test))
+
+```
+
+# HA 8.1
+Evaluation of ACF's for random numbers
+(a)  The diagrams shown all indicate white noise as they the lag measures are within the acceptable bounds. As the sample size increases from 36 to 1000 the number of lags evaluated increase, and the threshold  for what would be considered significant decreases.
+
+(b)  The critical values decrease for larger samples sizes because the expected the variability changes according to sample size.  The smaller sample will have more variability, and containing more noise, than that of larger sample sizes, so the thresholds are reduced as the population increases. The auto-correlations are different between the different views because the data is different. There are different lags evaluated over larger sample sizes, which will result in different values calculated for auto-correlation. 
+
+# HA 8.2
+
+(a) Plotting and evaluating the ACF and PCF for the 'ibmclose' data set
+
+The ACF plot shows that the series is non-stationary because it has high correlation across lag times, with a pattern of decreasing correlation as the lag increase.  This implies that the daily change is closely related to the prior day, less so to the day before, and so on.  Taking a difference in order to model how the rate changes from one day to the next will help alleviate the influence over the overall trend in forecasting.  
+
+The PACF plot shows a very high correlation with 1 day lag, then drops to the level of noise for subsequent lags.  This is another way of showing the great influence one day has on the next day, but when that influence is factored out and removed the prior days are not well correlated. 
+
+```{r message=FALSE}
+str(ibmclose)
+#lagdays <- c(1,2, 3, 5, 10, 15, 20, 30,40)
+#lag.plot(ibmclose, lags = 9, set.lags = lagdays, do.lines = FALSE)
+
+acf(ibmclose, lag.max = NULL,
+    type= "correlation", plot = TRUE, na.action = na.fail, demean = TRUE)
+
+pacf(ibmclose, lag.max=NULL, plot=TRUE)
+```
+
+# HA 8.6
+
+A study of the number of women murdered in the US using data set 'wmurders' using AIRMA model. This data consists of 55 yearly observations from 1950 to 2004. There is no seasonal component. 
+
+A review of the simple plot shows some trending over time, increasing from 1950 to 1970, and showing a general decreasing trend from about 1991 to 2004.  The boxplot indicates there are no significant outliers in the data. The data is appears to be fairly uniformly distributed. 
+
+
+
+```{r message=FALSE}
+plot(wmurders)
+summary(wmurders)
+sd(wmurders)
+dfw <- data.frame(wmurders)
+
+boxplot(wmurders, outcol= "red",main="Women Murders by Year")
+hist(wmurders)
+```
+
+Reviewing the ACF and PACF indicate there are long=term trends in the data and it is not stationary.The ADF test also shows a high p-value.   To adjust for this the difference is taken so we can remove the trending influence. The resulting ACF and PACF still show some lag correlation, possibly decreasing over time. 
+Taking the first difference results in a low ADF test p-value and low KPSS test  p-value of,  so the first difference is needed to achieve stationary. 
+
+```{r message=FALSE}
+# checking stationarity
+acf(wmurders, lag.max = NULL, type="correlation", plot = TRUE, na.action = na.fail, demean = TRUE, main="Women Murders ACF")
+
+pacf(wmurders, lag.max=NULL, plot=TRUE, main="Women Murders PACF")
+(ktest <- kpss.test(wmurders, null="Trend"))
+
+adf.test(wmurders, alternative = "stationary")
+diff1 <- diff(wmurders)
+plot(diff1)
+tsdisplay(diff1,main="")
+
+#kpss test
+
+ktest1 <- kpss.test(diff1, null = "Trend")
+
+(adf.test(diff1, alternative = "stationary"))
+diff2 <- diff(diff1)
+(kptest2 <- kpss.test(diff2, null="Trend"))
+
+tsdisplay(diff2,main="")
+```
+Because of the decreasing correlation as the lag increases, as show in in the PACF, the first model tested can begin as an AR(1) model, trying a different settings for the parameters. 
+
+The best model found was AR(1,1,0), with the lowest AICc value of -8.04.  
+
+```{r message=FALSE}
+# split train and test
+diff1tr <- window(diff1,end=1994)
+diff1ts <- window(diff1, start=1995)
+#choosing the ARIMA model (0,1,0)
+(fit1 <- Arima(diff1tr, order=c(0,1,0)))
+(fit2 <- Arima(diff1tr, order=c(1,1,0)))
+(fit3 <- Arima(diff1tr, order=c(1,1,1)))
+
+
+
+acf(residuals(fit1))
+acf(residuals(fit2))
+acf(residuals(fit3))
+
+(Box.test(residuals(fit2), lag=4, fitdf=2, type="Ljung"))
+fcst <- forecast(fit2,h=10)
+accuracy(fcst$mean, diff1ts)
+
+plot(forecast(fit2, h=10))
+lines(diff1ts, col="blue")
+lines(fcst$mean, col="green")
+legend("topleft", lty=1, col=c("black","blue","green"), c("Data","test","forecast"), cex=.65)
+
+```
+The best model found has is of the form AR(1,1,0). The residuals primarily showing the series is stationary. The forecast, shown in green,  has an accuracy has a RMSE of .244.  This forecast appears to pessimistically estimate the rate of change but align will with overall changes.  
+

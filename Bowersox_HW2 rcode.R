@@ -1,0 +1,860 @@
+#' ---	
+#' title: "CB HW2"	
+#' author: "Cheryl Bowersox"	
+#' date: "May 20, 2018"	
+#' output: word_document	
+#' ---	
+#' 	
+#' ##Excercises	
+#' 	
+#' ###KH 6.3	
+#' Using the manufacturing data set, understand the relationship between biological and manufacturing predictors with the yield levels.  Biological cannot be changed but can provide insight into the quality of material used.  Manufacturing data can be changed.  	
+#' What factors can be adjusted to boost yield and increase revenue?	
+#' 	
+#' ##Exploring Manurfacturing Data	
+#' 	
+#' The manufacturing data set includes 58 variables and 176 observations.  This data set is numeric, although some variables appear to be binomial may stand for categorical qualities, such as ManufacturingProcess12. 	
+#' 	
+#' There are 12 biological predictors, and 45 manufacturing data. 	
+#' The data contains missing manufacturing values, with the Manufacturing.Process03 missing the most at 9%. 	
+#' 	
+#' The data is clean, there are no missing values and no obvious outliers in the data.  The biological predictors tend to be normally distributed, while the manufacturing values have some 	
+#' 	
+#' 	
+library(AppliedPredictiveModeling)	
+library(ggplot2)	
+library(dplyr)	
+library(DataExplorer)	
+library(caret)	
+library(forecast)	
+	
+	
+	
+data(ChemicalManufacturingProcess)	
+df.man <- ChemicalManufacturingProcess	
+summary(df.man)	
+	
+	
+#plot response variable	
+hist(df.man$Yield)	
+	
+#remove response variable	
+df.Yield <- as.data.frame(df.man$Yield)	
+df.man <- dplyr::select(df.man,-Yield)	
+DataExplorer::plot_histogram(df.man)	
+	
+#missing values	
+plot_missing(df.man)	
+	
+	
+#' 	
+#' 	
+#' Impute missing values using the preprocess function in the caret package. This uses K-nearest neighbor to estimate the missing values.  	
+#' 	
+#' 	
+#imputed values	
+	
+proc.man <- preProcess(df.man,method = c("knnImpute"))	
+df.man2 <- predict(proc.man, df.man)	
+plot_missing(df.man2)	
+#' 	
+#' 	
+#'
+#' 80% of the data set(143 observations) was split out to train a model,  while the remaining 20% (33 observations) were held back for testing.  	
+#' Additional pre- processing was applied to scale and center the data, as well as BoxCox transformations. The BoxCox transformations will help address skewness found in some of the predictor variables. 	
+#' 	
+#' The transformations, centering, and scaling help normalize the variables. 	
+#' 	
+#' In addition to transformations, it is important to review the data for co-linearity and check for an variances close to zero. The selected model does no handle near-zero variance well, and variables with this attribute will be dropped from analysis.  	
+#' 	
+#' 	
+#review for high correlations	
+	
+dfcorr<- cor(df.man2, use="pairwise.complete" )	
+#rows with correlation >.2	
+highCorr <- findCorrelation(dfcorr,cutoff = .8, exact = FALSE, names = TRUE)	
+highCorr1 <- findCorrelation(dfcorr,cutoff = .8, exact = FALSE, names = FALSE)  #return index	
+	
+df.man3 <- df.man2[,-highCorr1]	
+	
+vars <- sapply(df.man3, function(x) sd(x))	
+	
+#near zeros	
+	
+var.zeros <- nearZeroVar(df.man3, names = TRUE)	
+var.zeros1 <- nearZeroVar(df.man3)	
+	
+df.man4 <- df.man3[,-var.zeros1]	
+	
+# Splitting DAta	
+	
+set.seed(42)	
+# Training Rows created	
+trnRows <- createDataPartition(df.man4[,1],p =.8,list = FALSE, times = 1)	
+	
+#select training and testing subsets - for this example can use just the first sample created	
+trndf.man <- df.man4[trnRows,]	
+trndf.Yield <- df.Yield[trnRows,]	
+	
+testdf.man <- df.man4[-trnRows,]	
+testdf.Yield <- df.Yield[-trnRows,]	
+	
+nrow(trndf.man)	
+nrow(testdf.man)	
+	
+#PreProcess to scale and apply Box-Cox transformations 	
+	
+proc.man2 <- preProcess(trndf.man,method = c("scale", "center", "BoxCox"))	
+#apply to traning and test data	
+	
+trndf.man2 <- predict(proc.man2, trndf.man)	
+testdf.man2 <- predict(proc.man2, testdf.man)	
+	
+DataExplorer::plot_histogram(trndf.man2)	
+	
+	
+	
+	
+	
+#' 	
+#' 	
+#' The following 17 variables show a correlation of > .75 with others and are removed from the data set. 	
+#' `r highCorr`  	
+#' 	
+#' A single variable, `r var.zeros` was found with internal variance close to zero. This was also dropped from the data set. 	
+#' 	
+#' 	
+#' 	
+#' 	
+ctrlSamp1 = trainControl(method = "repeatedcv", number = 10)# classProbs = TRUE)	
+	
+	
+	
+ridg.grid <-  data.frame(.lambda = seq(0, .3,.01))	
+	
+set.seed(45)	
+	
+modelridg <-  train(x=trndf.man2,y=trndf.Yield,	
+                    method = "ridge",	
+                    trControl = ctrlSamp1,	
+                    tuneGrid = ridg.grid)	
+(modelridg)	
+	
+(plot(modelridg))	
+bl <- modelridg$bestTune[1,1]	
+	
+mod.rmse <- modelridg$results[modelridg$results$lambda == bl,2]	
+mod.rsqr <- modelridg$results[modelridg$results$lambda == bl,3]	
+	
+#' 	
+#' 	
+#' 	
+#' A ridge regression model was trained on the transformed data set, with 10-fold validation.  	
+#' The tuning parameter, lambda,  was evaluated from .001 to .3, and was found to produce the best MSE and  value when lambda = `r bl`. The RMSE found for this best model was `r mod.rmse` , with an Rsquared value of `r mod.rsqr`. 	
+#' 	
+#' 	
+#' 	
+#' 
+#' Predication based on the ridge model with lambda = .1 were made for the Yield using the test data and compared against the actual observed Yield values.    	
+#' . 	
+#' 	
+#' 	
+	
+pred.Yield <- predict(modelridg,testdf.man2)	
+pred.acc<-accuracy(testdf.Yield, pred.Yield)	
+Yield.Errors <- testdf.Yield - pred.Yield	
+plot(x = testdf.Yield, y = pred.Yield, main = "Actual vs. Predicted")	
+plot(x = testdf.Yield, y = Yield.Errors, main = "Actual vs.Errors")	
+hist(Yield.Errors)	
+	
+pred.rmse <- pred.acc[1,2]	
+pred.rsqr <- cor(pred.Yield,testdf.Yield)	
+	
+modresults0 <- postResample(pred.Yield,testdf.Yield)	
+#' 	
+#' 	
+#' The predictions had a lower RMSE, of `r pred.rmse`, but a much higher Rsquared value of `r pred.rsqr`	
+#' This may indicate the model well fitted to the actual scenario, and that the higher RMSE during training is caused by outliers or other unusual features included in the training data, but re-sampling avoided over-fitting to those data points.  	
+#' 	
+#' 	
+#' 
+#' The top 10 variables are a mixture of Biological and Manufacturing, but the Manufacturing process variables dominate the model, and make up 8 of the top 10 in importance.  This is good news for our manufacturer, as it the Biological are fixed, but the manufacturing process is flexible and these levers identified below can influence the Yield.  	
+#' 	
+#' 	
+# variable importance 	
+var.imp <- varImp(modelridg)	
+	
+var.top10 <- data.frame(var.imp$importance[order(-var.imp$importance[,1]),, drop = FALSE])	
+var.top10$Variable <- row.names(var.top10)                    	
+ridge10 <- head(var.top10,10)	
+	
+#graph importance	
+	
+	
+plot(var.imp, main = "Variable Importance - Top 10", top=10, cex=.5)	
+	
+#' 	
+#' 
+#' 	
+#' With the top drivers given by our model, the relationship between these particular predictors and the Yield is more important to understand in depth. An analysis of the relationships reveal Manufacturing Process 13, 6, and 7 are negatively correlated with the Yield, which means if these values can be driven lower the resulting Yield may increase.  The Biological Materials 03 and Manufacturing Process 09 are also influential variables but have a strong positive correlation with the Yield.  There is quite a bit of correlation among variables,  with process 13 very highly related to other variables. This implies only one lever should be adjusted at a time, and the best place to start would be trying to decrease process 13.  	
+#' 	
+#' 	
+#' 	
+vars <- row.names(var.top10)[1:10]	
+	
+df.mansub <- dplyr::select(df.man2, vars)	
+df.mansub$Yield <- df.Yield[,1]	
+	
+plot_scatterplot(data=df.mansub, by = "Yield")	
+	
+plot_correlation(df.mansub, type = c("all"),	
+  maxcat = 20)	
+	
+#' 	
+#' 	
+#' 	
+#' ##K.J 7.2	
+#' Create several models using the Friedman generated data and evaluate prediction accuracy and variable importance. 	
+#' 	
+#' 	
+library(mlbench)	
+set.seed(200)	
+	
+#training data	
+trndata <- mlbench.friedman1(200, sd = 1)	
+	
+trn.df <- data.frame(trndata$x)	
+trn.df$y <- trndata$y	
+	
+	
+#test data	
+testdf <- mlbench.friedman1(5000, sd = 1)	
+	
+test.df <- data.frame(testdf$x)	
+test.df$y <- testdf$y	
+	
+#review training data	
+str(trn.df)	
+	
+	
+plot_scatterplot(data=trn.df, by = "y")	
+	
+plot_correlation(trn.df, type = c("all"),	
+  maxcat = 20)	
+	
+#' 	
+#' 	
+#' Initial analysis of the training data shows some limited linear relationship between x4 and the y value, however the variables x1, x2, and x3 show additional non-linear curved relationships.	
+#' 	
+#' Several models were tuned to this data, a glm model, knn model, and an SVM model, and the resulting variable importance compared to the results of the MARS run using the 'earth' model.  	
+#' 	
+#' 	
+#' 	
+#' 	
+	
+ctrlSamp1 = trainControl(method = "repeatedcv", repeats = 4) #,classProbs = TRUE)	
+	
+set.seed(1492)	
+modelglm <-  train(y ~ .,	
+                    data = trn.df,	
+                    method = "glm",	
+                    trControl = ctrlSamp1)	
+(modelglm)	
+modglm.rsme <- modelglm$results[1,2]	
+modglm.rsqr <- modelglm$results[1,3]	
+glm.pred <- predict(modelglm, test.df)	
+	
+	
+#knn	
+	
+	
+set.seed(123)	
+	
+modelknn <- train(y ~ .,	
+             method     = "knn",	
+             tuneGrid   = expand.grid(k = 1:10),	
+             trControl  = ctrlSamp1,	
+             metric     = "RMSE",	
+             data       = trn.df,preProc =c("center", "scale"))	
+(modelknn)	
+modelknn.rmse <- modelknn$results[modelknn$results$k == modelknn$bestTune[1,1],2]	
+modelknn.rsqr <- modelknn$results[modelknn$results$k == modelknn$bestTune[1,1],3]	
+knn.pred <- predict(modelknn, test.df)	
+	
+#svm model	
+set.seed(143)	
+	
+modelsvm =train(y ~.,	
+                data = trn.df,	
+                metric = 'RMSE', 	
+                method = "svmRadial",	
+                preProc =c("center", "scale"),	
+                tuneLength = 14, trControl = ctrlSamp1)	
+(modelsvm)	
+	
+modelsvm.rmse <- modelsvm$results[modelsvm$results$C == modelsvm$bestTune[1,2],3]	
+modelsvm.rsqr <- modelsvm$results[modelsvm$results$C == modelsvm$bestTune[1,2],4]	
+svm.pred <- predict(modelsvm, test.df)	
+	
+#mars!	
+set.seed(86)	
+	
+modelmars =train(y ~.,	
+                data = trn.df,	
+                metric = 'RMSE', 	
+                method = "earth",	
+                preProc =c("center", "scale"),	
+                trControl = ctrlSamp1)	
+(modelmars)	
+	
+mars.pred <- predict(modelmars, test.df)	
+	
+	
+#' 	
+#' 	
+#' 	
+#' Comparing the variable importance of the four models shows that MARS model correctly identified the most relevant variables, X4,X1,X2,and X3.	
+#' The SVM model placed greater importance on X4, and lesser on x1-x3 but followed the same pattern of importance. 	
+#' The KNN model was very similar in importance ranking to the SVM, but the GLM model was more interesting.  The GLM gave the most importance to X4 as the others, but X2, x1, and X5 are the next most important, with X3 showing no importance in this view.  	
+#' 	
+#' Comparing the accuracy measures of the models shows that the Mars model had both the lowest RMSE and the highest Rsquared value, making it a better model. The SVM model also did well, and considered the correct variables with the same level of important, but over-emphasized the X4 contribution. Despite the similar importance ranking, the KNN model had a much higher RMSE and lower Rsquared. The GLM model performed better than the KNN, even though it had an unusual variable importance pattern.  	
+#' 	
+#' 	
+#' 	
+#' 	
+#' 	
+	
+#compare variable importance	
+par(mfrow=c(2,2))	
+plot(varImp(modelglm), main="GLM variable importance")	
+plot(varImp(modelknn), main="KNN variable importance")	
+plot(varImp(modelsvm), main="SVM variable importance")	
+plot(varImp(modelmars), main="MARS variable importance")	
+	
+# Compare	
+	
+(modresults <- rbind(glm = postResample(glm.pred, test.df$y), 	
+                               knn= postResample(knn.pred, test.df$y),	
+                               svm = postResample(svm.pred, test.df$y), 	
+                               mars = postResample(mars.pred,test.df$y)))	
+	
+	
+	
+	
+#' 	
+#' 	
+#' ##KJ 7.5	
+#' Revisit the problem 6.3 and evaluate non-linear models using similar pre-processing.  Compare the models. 	
+#' 	
+#' Using the same pre-processed data used in problem 6.3 above, three non-linear models were created, MARS, SVM, and KNN models.  	
+#' 	
+#' 	
+#' 	
+	
+#re-using training/test splits and pre-processed data from 6.3	
+	
+#trndf.man <- df.man4[trnRows,]	
+#trndf.Yield <- df.Yield[trnRows,]	
+	
+#testdf.man <- df.man4[-trnRows,]	
+#testdf.Yield <- df.Yield[-trnRows,]	
+	
+	
+#PreProcess to scale and apply Box-Cox transformations 	
+	
+#proc.man2 <- preProcess(trndf.man,method = c("scale", "center", "BoxCox"))	
+	
+#trndf.man2 <- predict(proc.man2, trndf.man)	
+#testdf.man2 <- predict(proc.man2, testdf.man)	
+	
+	
+#models - MARS, SVM, KNN	
+#knn	
+	
+trndf.man2$yield <- trndf.Yield	
+testdf.man2$yield <- testdf.Yield	
+	
+set.seed(123)	
+	
+modelknn2 <- train(yield~ .,	
+             method     = "knn",	
+             tuneGrid   = expand.grid(k = 1:10),	
+             trControl  = ctrlSamp1,	
+             metric     = "RMSE",	
+             data       = trndf.man2)	
+(modelknn2)	
+	
+knn.pred2 <- predict(modelknn2, testdf.man2)	
+	
+#svm model	
+set.seed(143)	
+	
+modelsvm2 =train(yield ~.,	
+                data = trndf.man2,	
+                metric = 'RMSE', 	
+                method = "svmRadial",	
+                tuneLength = 14, trControl = ctrlSamp1)	
+(modelsvm2)	
+	
+svm.pred2 <- predict(modelsvm2, testdf.man2)	
+	
+#mars!	
+set.seed(86)	
+	
+modelmars2 =train(yield ~.,	
+                data = trndf.man2,	
+                metric = 'RMSE', 	
+                method = "earth",	
+                trControl = ctrlSamp1)	
+(modelmars2)	
+	
+mars.pred2 <- predict(modelmars2, testdf.man2)	
+	
+	
+#compares top 10	
+mars.var.imp <- varImp(modelmars2)	
+	
+mars.var.top10 <- data.frame(mars.var.imp$importance[order(-mars.var.imp$importance[,1]),, drop = FALSE])	
+mars.var.top10$Variable <- row.names(mars.var.top10)	
+	
+mars10 <- head(mars.var.top10,10)	
+	
+#compares top 10	
+knn.var.imp <- varImp(modelknn2)	
+	
+knn.var.top10 <- data.frame(knn.var.imp$importance[order(-knn.var.imp$importance[,1]),, drop = FALSE])	
+knn.var.top10$Variable <- row.names(knn.var.top10)	
+knn10 <- head(knn.var.top10,10)	
+	
+	
+#compares top 10	
+svm.var.imp <- varImp(modelsvm2)	
+	
+svm.var.top10 <- data.frame(svm.var.imp$importance[order(-svm.var.imp$importance[,1]),, drop = FALSE])	
+svm.var.top10$Variable <- row.names(svm.var.top10)	
+svm10 <- head(svm.var.top10,10)	
+	
+comp.vars <- full_join(ridge10, mars10, by='Variable') %>%	
+                full_join(.,knn10 , by='Variable')%>%	
+                full_join(.,svm10, by = 'Variable')	
+cols<- c("Ridge", "Variable", "Mars", "KNN", "SVM")	
+colnames(comp.vars) <- cols	
+	
+(comp.vars <- comp.vars[,c(2,1,3,4,5)])	
+	
+## compare model results	
+	
+(modresults2 <- rbind(ridge = postResample(pred.Yield, testdf.man2$yield), 	
+                               knn= postResample(knn.pred2, testdf.man2$yield),	
+                               svm = postResample(svm.pred2, testdf.man2$yield), 	
+                               mars = postResample(mars.pred2,testdf.man2$yield)))	
+	
+	
+	
+#' 	
+#' 	
+#' Comparing the three new models with the prior ridge model shows that the ridge model has a better RMSE and Rsquared value.  	
+#' 	
+#' Reviewing the top 10 variables for each model show most had similiar results. Most found ManufacturingProcess13 as the most important variable, with MARS model showing this as second most important. all models selected only two biological variables, BiologicalMaterial03 and BiologicalMaterial11, within the top 10.  It is interesting to note the MARS model identified a much different set of lower-ranked manufacturing process variables when building the model, and only returned 6 variables of any importance to the model. 	
+#' 	
+#' The Biological Material predictors are ranked similarly across the models.    	
+#'   	
+#' ##KJ 8.1	
+#' Recreate simulated data from 7.2, fit random forest model and compare	
+#' 	
+#' 	
+set.seed(200)	
+	
+#training data	
+trndata <- mlbench.friedman1(200, sd = 1)	
+trn.df <- data.frame(trndata$x)	
+trn.df$y <- trndata$y	
+	
+#test data	
+testdf <- mlbench.friedman1(5000, sd = 1)	
+test.df <- data.frame(testdf$x)	
+test.df$y <- testdf$y	
+	
+	
+#fit random forest model	
+	
+library(randomForest)	
+modelrf1 <- randomForest(y~.,	
+                        data=trn.df,	
+                        importance = TRUE,	
+                        ntree= 1000)	
+	
+var.imp.rf1 <- varImp(modelrf1, scale = FALSE)	
+randomForest::varImpPlot(modelrf1, scale = FALSE)	
+#' 	
+#' 
+#' The random forest model gave importance to variables x1 - x5, but did not identify the remaining variables is important.	
+#' 	
+#' 	
+#' A predictor, highC, is added that is highly correlated with variable 1 and evaluate changed performance. 	
+#' 	
+#' The new variable has a high overall importance in the new random forest model but both it and Variable 1 having similar importance are now less important than variable 2.  The importance of variable 1 has decreased from 8.7 before the new addition, to 5.4 after the new variable is added. This is interesting because the new variable is not adding any new information to the model, but the importance now is spread between the two variables. 	
+#' 	
+#' 	
+#new predictor variable highly correlated with V1	
+	
+trn.df$highC <-trn.df[,1]+rnorm(200)*.01	
+cor(trn.df[,1], trn.df$highC)	
+	
+modelrf2 <- randomForest(y~.,	
+                        data=trn.df,	
+                        importance = TRUE,	
+                        ntree= 1000)	
+	
+var.imp.rf2<-varImp(modelrf2, scale = FALSE)	
+randomForest::varImpPlot(modelrf2, scale = FALSE)	
+	
+#' 	
+#' 	
+#' 
+#' Create a random forest model with conditional inference trees and evaluate importance comparison.  	
+#' 	
+#' The third model, creating using cforest from the party package and using the original data set has different importance values when compared to the first random forest model.  It has placed a higher importance on X1, X2, and X5, and decreased the importance of X3.  	
+#' 	
+#' The fourth model, created using the cforest function and the modified data is different from the results found on same data using the randomForest model. The importance variables are ranked similarly, but with less importance to X1 and highC, and more importance given to X4. Although it is different than the randomForest model (model 2) it contains the same problem of identifying a linearly correlated variable as highly important. 	
+#' 	
+#' The fifth and sixth model importance are the fourth and third models but with importance calculated using the conditional method.  This resulted  in all variables showing a significant less important than the other views, but their relative ranking shows different patterns than seen in the non-conditional views.  For the fifth it now has x2, x4, then x1 as the top three in importance, while the six view has X2, X4 and highC replacing X1 in the top 3. 	
+#' 	
+#' 	
+library(party)	
+	
+#Model old + New data using cforest function in party library	
+	
+trn.dfold <- trn.df[,1:11]	
+	
+set.seed(867)	
+modelrf3<- cforest(y ~ ., data = trn.dfold, controls = cforest_control(ntree = 1000))	
+	
+set.seed(53)	
+modelrf4 <- cforest(y ~ ., data = trn.df, controls = cforest_control(ntree = 1000))	
+	
+vars.imp.rf3 <- varimp(modelrf3)	
+vars.imp.rf4 <- varimp(modelrf4)	
+vars.imp.rf3C <- varimp(modelrf3, conditional = TRUE)	
+vars.imp.rf4C <- varimp(modelrf4, conditional = TRUE)	
+	
+#consol data	
+d1 <- data.frame(cbind(Var = row.names(var.imp.rf1), "rf1" = var.imp.rf1[,1]))	
+d2 <- data.frame(cbind(Var = row.names(var.imp.rf2), "rf2" = var.imp.rf2[,1]))	
+d3 <- data.frame(cbind(Var = names(vars.imp.rf3), "rf3" = vars.imp.rf3))	
+d4 <- data.frame(cbind(Var = names(vars.imp.rf4), "rf4"= vars.imp.rf4))	
+d5 <- data.frame(cbind(Var = names(vars.imp.rf3C), "rf3.Cond" = vars.imp.rf3C))	
+d6 <- data.frame(cbind(Var = names(vars.imp.rf4C), "rf4.Cond"= vars.imp.rf4C))	
+	
+#unite!	
+comp.vars.rf <- suppressWarnings(full_join(d1, d2, by='Var') %>%	
+                full_join(.,d3 , by='Var')%>%	
+                full_join(.,d4 , by = 'Var')%>%full_join(.,d5, by = 'Var')%>%	
+                full_join(.,d6, by = 'Var'))	
+	
+#write.csv(comp.vars.rf, "comprf.csv")	
+	
+	
+	
+#' 	
+#' **(d) Additional models**  	
+#' Using a gbm and a cubist model generates similar results	
+#' 	
+#' The cubist model gave the exact same results when run with default or conditional importance measures.  1 and 3, calculated on the old data, give all importance to variables x1-x6, and assign none to the later variables.  The importance placed on X6 was surprising.  In the model using the new predictor, the importance of X1 was  reduced and the new predictor given greater importance, while rest of the variables remain largely unchanged with this addition. 	
+#' 	
+#' The gmb model identified X4 as the most important variable for both models and regardless of condition value.X1 comes next, and this model does a better job identifying that the new variable, highC, is not as important.  highC is given an importance of 11, it does not as dramatically decrease the X1 variable  in importance, or change magnitude or order of the other variables very , and does not decrease the most important variable, X4, at all. 	
+#' 	
+#' 	
+#' 	
+library(gbm)	
+library(Cubist)	
+#cubes	
+set.seed(309)	
+modelcub1<- cubist(y=trn.dfold$y, x=trn.dfold[1:10], committees = 50)	
+	
+set.seed(309)	
+modelcub2 <- cubist(y=trn.df$y, x=trn.df[,-11], committees = 50)	
+	
+	
+	
+vars.imp.c1 <- varImp(modelcub1)	
+vars.imp.c2 <- varImp(modelcub2)	
+vars.imp.c1c <- varImp(modelcub1, conditional = TRUE)	
+vars.imp.c2c <- varImp(modelcub2, conditional = TRUE)	
+	
+#consol data	
+d1 <- data.frame(cbind(Var = row.names(vars.imp.c1), "cube1" = vars.imp.c1[,1]))	
+d2 <- data.frame(cbind(Var = row.names(vars.imp.c2), "cube2" = vars.imp.c2[,1]))	
+d3 <- data.frame(cbind(Var = row.names(vars.imp.c1c), "cube2 cond" = vars.imp.c1c[,1]))	
+d4 <- data.frame(cbind(Var = row.names(vars.imp.c2c), "cube3 cond" = vars.imp.c2c[,1]))	
+	
+#unite!	
+comp.vars.cube <- suppressWarnings(full_join(d1, d2, by='Var') %>%	
+                full_join(.,d3 , by='Var')%>%	
+                full_join(.,d4 , by = 'Var'))	
+	
+print("Cube Variable Importance")	
+print(comp.vars.cube)	
+	
+#gbm	
+set.seed(309)	
+modelgbm1 <- train(y ~., 	
+                  data = trn.dfold,	
+                  method='gbm', 	
+                  trControl=ctrlSamp1,	
+                  verbose = FALSE)	
+                  #metric = "ROC")	
+	
+set.seed(309)	
+modelgbm2 <- train(y ~., 	
+                  data = trn.df,	
+                  method='gbm', 	
+                  trControl=ctrlSamp1,	
+                  verbose = FALSE)	
+                  #metric = "ROC")	
+	
+vars.imp.g1 <- varImp(modelgbm1)	
+vars.imp.g2 <- varImp(modelgbm2)	
+vars.imp.g1c <- varImp(modelgbm1, conditional = TRUE)	
+vars.imp.g2c <- varImp(modelgbm2, conditional = TRUE)	
+	
+#consol data	
+d1 <- data.frame(cbind(Var = row.names(vars.imp.g1$importance), 	
+                       "gbm1" = vars.imp.g1$importance[,1]))	
+d2 <- data.frame(cbind(Var = row.names(vars.imp.g2$importance), 	
+                       "gbm2" = vars.imp.g2$importance[,1]))	
+d3 <- data.frame(cbind(Var = row.names(vars.imp.g1c$importance), 	
+                       "gbm cond" = vars.imp.g1c$importance[,1]))	
+d4 <- data.frame(cbind(Var = row.names(vars.imp.g2c$importance), 	
+                       "gbm cond" = vars.imp.g2c$importance[,1]))	
+	
+#unite!	
+comp.vars.gbm <- suppressWarnings(full_join(d1, d2, by='Var') %>%	
+                full_join(.,d3 , by='Var')%>%	
+                full_join(.,d4 , by = 'Var'))	
+	
+print("GBM Variable Importance")	
+print(comp.vars.gbm)	
+	
+#' 	
+#' ##KJ 8.2	
+#' 	
+#' Using a simulation to show tree bias with different granularity.  	
+#' 	
+#' First a data set was created, with a related x predictor and y response, then two additional unrelated variables, x2, and x3, were added to the data.   A tree model was run on this data set and variable importance analyzed. 	
+#' 	
+#' X2 and X3 have no relationship to X1 or Y, but each is selected for the model.	
+#' 	
+#' 	
+#' 	
+	
+#create a data frame with data	
+x <- rep(0:1, 50)  #numbers	
+y <- x + sample(seq(0,.5,.001), 100)	
+z <- rnorm(100)	
+z2 <- rnorm(100)/10	
+	
+dfsim <- data.frame(cbind(x,z,z2, y))	
+colnames(dfsim) <- c("x", "x1", "x2", "y")	
+	
+#repeat this modifying the inputs and check on model variable selection	
+	
+plot_correlation((dfsim))	
+	
+#' 	
+#' 	
+#' 	
+#' ##8.6 Permiablity	
+#' Review permeability problem from problem 6.2 and train several tree models, evaluate the results.	
+#' Permeability is a data set with 165 responses. The fingerprints data contains 1,107 predictors for those 165 responses.  There are 719 predictors with almost no variance which will not work will with a tree model and are removed, resulting in 388 remaining predictors. 	
+#' 	
+#' 80% of the data was split to create a training /test set. 	
+#' 	
+#' 	
+#' 	
+data("permeability")	
+	
+df.perm <- permeability	
+summary(df.perm)	
+#remove zeros	
+zees <- nearZeroVar(fingerprints)	
+df.fing <- as.data.frame(fingerprints[,-zees])	
+#remove zeros	
+dim(df.fing)	
+	
+#spliting into training and test sets	
+	
+set.seed(42)	
+# Training Rows created	
+trnRows <- createDataPartition(df.perm,p =.8,list = FALSE, times = 1)	
+	
+#select training and testing subsets - for this example can use just the first sample created	
+trn.df.fing <- df.fing[trnRows[,1],]	
+trn.df.perm <- df.perm[trnRows[,1],]	
+	
+test.df.fing <- df.fing[-trnRows[,1],]	
+test.df.perm <- df.perm[-trnRows[,1],]	
+#' 	
+#' 	
+#' 	
+#' Three tree-based models were used to train and evaluate the models:  	
+#' a single tree, a boosted tree (gbm), and a random forest tree. The gbm and random forest model have very similar importance for their top 10 predictors, with top value for both being X6, X157, X129 while the single tree model has different values such as X141, X6, and X240. All three appreciate the X6 inputs but have different outputs.  	
+#' 	
+#' 	
+#' 	
+#models	
+#train test df	
+library(rpart)	
+modeltree1 <- train(x = trn.df.fing, y=trn.df.perm, 	
+                  method='rpart2', 	
+                  trControl= trainControl(method = "cv"),	
+                  tuneLength = 10)	
+                  	
+	
+modelgbm2 <- train(x = trn.df.fing, y=trn.df.perm, 	
+                  method='gbm', 	
+                  trControl=ctrlSamp1,	
+                  verbose = FALSE)	
+                  #metric = "ROC")	
+	
+modelrf5 <- train(x = trn.df.fing, y=trn.df.perm, 	
+                  method='rf', 	
+                  importance = TRUE,	
+                  ntrees = 1000)	
+	
+vars.imp.tr1 <- varImp(modeltree1, top=10)	
+vars.imp.g2 <- varImp(modelgbm2, top =10)	
+vars.imp.rf5 <-varImp(modelgbm2, top=10)	
+	
+plot(vars.imp.tr1, top=10,main="Variable importance - tree model")	
+plot(vars.imp.g2, top=10,main="Variable importance - gbm model")	
+plot(vars.imp.rf5,top=10, main="Variable importance - rf model")	
+	
+#' 	
+#' 	
+#' Of the models created for this exercise, I would choose the random forest model. It is computational more intensive,but has the best Rsquared value and lowest RMSE, although the MAE is only slight better than the single tree model.  The computation time, however to compute the random forest model may be consideration, and the lab may be willing to trade speed for accuracy.  	
+#' 	
+#' 	
+	
+#compare model accuracy	
+	
+#	
+tree.pred <- predict(modeltree1,test.df.fing)	
+	
+gbm2.pred <- predict(modelgbm2, test.df.fing)	
+	
+rf5.pred <- predict(modelrf5, test.df.fing)	
+	
+(modresultsz <- rbind(tree = postResample(tree.pred, test.df.perm), 	
+                     gbm = postResample(gbm2.pred, test.df.perm), 	
+                     rf = postResample(rf5.pred, test.df.perm)))	
+	
+df_plots <- data.frame(cbind(tree.pred,gbm2.pred,rf5.pred,perm = test.df.perm))	
+	
+plot_scatterplot(df_plots, by = "perm", title="Model predictions vs. actual values")	
+	
+#' 	
+#' ##8.7 Continuing Chemical Manufacturing Process	
+#' 	
+#' Using same data processing as in problem 6.2 and 7.5, build and evaluate several tree models. Compare these results to prior results using other methods. 	
+#' 	
+#' 	
+#' To compare, I created a tee model, a gbm model, and a cube model using the preprocessed data.  These models were then compared, and the accuracy and rsquared evaluated against results from prior exercises mode results. 	
+#' 	
+#' The variable importance in these three models are different from other models. Most interesting is the gbm model, which is the only model that lists a biological element as the most important predictor. The best model, cube, has a different variable as the most important, ManufacturingProcess09, which did not show up in the top 3 for any of the linear or non-linear models, although was in position 2 on the tree model. 	
+#' 	
+#' After reviewing  the combined metrics of the linear, non-linear, and tree models, the best RMSE and Rsquared value are resulting from the cube model.	
+#' 	
+#' 	
+#' 	
+#' 	
+#from 7.5 & 6.3 above	
+#re-using training/test splits and pre-processed data from 6.3	
+	
+#trndf.man <- df.man4[trnRows,]	
+#trndf.Yield <- df.Yield[trnRows,]	
+	
+#testdf.man <- df.man4[-trnRows,]	
+#testdf.Yield <- df.Yield[-trnRows,]	
+	
+#PreProcess to scale and apply Box-Cox transformations 	
+	
+#proc.man2 <- preProcess(trndf.man,method = c("scale", "center", "BoxCox"))	
+	
+#trndf.man2 <- predict(proc.man2, trndf.man)	
+#testdf.man2 <- predict(proc.man2, testdf.man)	
+	
+	
+#add these back in for this	
+trndf.man2$yield <- trndf.Yield	
+testdf.man2$yield <- testdf.Yield	
+	
+set.seed(867)	
+	
+	
+	
+modeltree2 <- train(yield~., 	
+                    data= trndf.man2,	
+                    method='rpart2', 	
+                    trControl= trainControl(method = "cv"),	
+                    tuneLength = 10)	
+                  	
+(modeltree2)	
+	
+modelgbm3<- train(yield~., 	
+                   data= trndf.man2,	
+                   method='gbm', 	
+                   trControl=ctrlSamp1,	
+                   verbose = FALSE)	
+                  #metric = "ROC")	
+	
+modelcube2<- train(yield~., 	
+                   data= trndf.man2,	
+                   method='cubist', 	
+                   trControl=ctrlSamp1,	
+                   verbose = FALSE)	
+                  	
+	
+	
+tree.pred2 <- predict(modeltree2, testdf.man2)	
+gbm.pred3 <- predict(modelgbm3,testdf.man2)	
+cube.pred2 <- predict(modelcube2, testdf.man2)	
+	
+	
+	
+modresults3 <- rbind(tree = postResample(tree.pred2, testdf.Yield), 	
+                     gbm = postResample(gbm.pred3, testdf.Yield), 	
+                     cube = postResample(cube.pred2, testdf.Yield))	
+	
+	
+	
+	
+#variables	
+	
+vars.imp.tr2 <- varImp(modeltree2)	
+vars.imp.g3 <- varImp(modelgbm3)	
+vars.imp.c3 <-varImp(modelcube2)	
+	
+plot(vars.imp.tr2, top=10,main="Variable importance - tree model")	
+plot(vars.imp.g3, top=10,main="Variable importance - gbm model")	
+plot(vars.imp.c3,top=10, main="Variable importance - cube model")	
+	
+	
+	
+#all model results	
+	
+modall <- data.frame(rbind(ridge = modresults0, modresults, modresults2,modresults3))	
+modall$Models <- row.names(modall)	
+	
+(modall <- dplyr::arrange(modall,RMSE,-Rsquared))	
+	
+df_plots <- data.frame(cbind(tree.pred2,gbm.pred3,cube.pred2, Yield = testdf.Yield))	
+	
+plot_scatterplot(df_plots, by = "Yield", title="Model predictions vs. actual values")	
+	
+	
+	
+	
+#' 	
+#' 	
+#' 	

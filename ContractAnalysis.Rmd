@@ -1,0 +1,69 @@
+---
+title: "Contract Execution"
+author: "Cheryl Bowersox"
+date: "October 21, 2018"
+output: word_document
+---
+## Introduction
+
+As part of a large IT organization one of my team's responsibilities is to move contracts from drafting through execution, and we are frequently asked for an estimate of processing time. The current model used for estimates has a very larger window, taking anywhere between one and twelve weeks.  This results in difficulty accurately forecasting project expenses and adhering to project timelines.  Furthermore, delays in contract execution can result in additional expenses because other parts of a complex project are put on hold to accommodate uncertain start dates.  This can also create variable deliverable quality in outcomes and risks to department goals. 
+
+The number of variables and dependencies involved in the corporate setting results in a expanded project.  There are differing types of contracts, multiple reviewers and stages to the process, widely variable dollar amounts, and differing vendors.  Additionally, each contract is by nature a distinct engagement, and there are external timing factors, such as year-end financial processes or quarterly forecasts, that may influence the timing. 
+
+## Other Approaches
+
+Other approaches to the problem of contract execution timing which have been attempted have not been very successful.  
+1. Amount based:  For several years project managers estimated the timing based on the amount of contract, but routinely underestimated the smaller contracts.  
+
+2.  Confidence Interval <provide details here of current process> 
+The current model in use examined historical data to determine an 80% confidence interval around the mean for all contracts and provides the upper bound as a pessimistic estimate. For example, all contracts greater than $500K will be executed within 60 business days.  While this model is still valid, this upper bound does not provide the precise timing needed to accurately plan a larger project.  \
+
+## Hypothesis for this analysis 
+My hypothesis is that a time-series analysis of two years of historical data, or around 400 records, could improve accuracy of predictions for execution time if all available variables are included. 
+
+By modeling the data as a time-series I hope to account for variability introduced by external cyclical factors.  The inclusion variables such as type of contract, vendor, processors, amounts, and other features will refine the estimation capability. In addition to better execution predictions, any consistent patterns that emerge and analysis of outliers will enable a better understanding of key drivers for delays in execution.
+
+## Project Goals
+This project has two main objectives. The first goal is to create a valid predictive model of contract exceution time that can be applied to new submissions.  The second goal is to discover which varibales have the greatest influence on contract timing. Understanding these variables can help make informed business decisions when developing new contract requirments.  
+
+
+##Problem Statement
+i. Predictive Model of t1, t2, or t3
+
+ii. Analytical model in pursuit of levers
+
+iii. Criteria for selection of model(s) 
+
+```{r setup, include=FALSE}
+
+
+#set file name - to be change by github link#
+beverages_filename <- "https://raw.githubusercontent.com/vbriot28/Data624_Group1_FinalProject/master/StudentData.csv"
+
+
+# Load Trainning Data Set
+beverages <-read.csv(beverages_filename, header=TRUE, sep=",",stringsAsFactors = F)
+
+#From DataExplorer
+data_list <- list(beverages)
+
+PlotStr(data_list, type="r")
+
+rm(data_list)
+
+```
+
+## R Markdown
+
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
