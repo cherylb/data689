@@ -27,43 +27,118 @@ By modeling the data as a time-series I hope to account for variability introduc
 This project has two main objectives. The first goal is to create a valid predictive model of contract exceution time that can be applied to new submissions.  The second goal is to discover which varibales have the greatest influence on contract timing. Understanding these variables can help make informed business decisions when developing new contract requirments.  
 
 
-##Problem Statement
-i. Predictive Model of t1, t2, or t3
+## Data Exploration 
+253 Complete Cases
+18 variables 
 
-ii. Analytical model in pursuit of levers
+< insert the table here >
 
-iii. Criteria for selection of model(s) 
+
+## Preliminary Analysis - Supplier Selection
 
 ```{r setup, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(DataExplorer) #this one needs unpacked (cb)
 
 
 #set file name - to be change by github link#
-beverages_filename <- "https://raw.githubusercontent.com/vbriot28/Data624_Group1_FinalProject/master/StudentData.csv"
+contracts <- "contracts.csv"
 
 
 # Load Trainning Data Set
-beverages <-read.csv(beverages_filename, header=TRUE, sep=",",stringsAsFactors = F)
+dfcontracts<-read.csv(contracts, header=TRUE, sep=",",stringsAsFactors = F)
 
-#From DataExplorer
-data_list <- list(beverages)
+#convert Dates
 
-PlotStr(data_list, type="r")
+#convert to ts  for ts forecasting
+#split into training vs. test sets (future looking - model)
 
-rm(data_list)
+
+#data analysis of the indifvidual variables
+
+#Vendor analysis 
+dfv <- dfcontracts%>%select(Vendor.ID, Scaled.Amount)%>%
+  mutate(Amt = as.numeric(Scaled.Amount))%>%
+  group_by(Vendor.ID)%>%
+  summarise(avg=mean(Amt), count = n())%>%
+  arrange(-count)
+
+#discuss decision to group supplier ID by top 7, the rest as 'others'
+dfoldv <- dfv%>%filter(count >1)
+dfnewv<- dfv%>%filter(count <2)
+
+plot(dfv$Vendor.ID, dfv$avg)
+# all except singltons
+
+v15<- dfcontracts$Vendor.ID ==15
+v1<- dfcontracts$Vendor.ID ==1
+v6<- dfcontracts$Vendor.ID ==6
+v18<- dfcontracts$Vendor.ID ==18
+v23 <- dfcontracts$Vendor.ID ==23
+v5<- dfcontracts$Vendor.ID ==5
+v26<- dfcontracts$Vendor.ID ==26
+v21<- dfcontracts$Vendor.ID ==21
+v19<- dfcontracts$Vendor.ID ==19
+v20<- dfcontracts$Vendor.ID ==20
+v4<- dfcontracts$Vendor.ID ==4
+v11 <- dfcontracts$Vendor.ID ==11
+v23<- dfcontracts$Vendor.ID ==23
+v10 <- dfcontracts$Vendor.ID ==10
+v13 <- dfcontracts$Vendor.ID ==13
+
+
+#list infrequesnt vendors
+vnew <- dfcontracts$Vendor.ID %in% dfnewv$Vendor.ID
+
+
+
+#discuss why you think it may be a good idea to use all vendors, all users 
+#use package dummy_cols  https://cran.r-project.org/web/packages/fastDummies/vignettes/making-dummy-variables.html
+#can do granular for intial model, and then summarise for others.  
+
+
+#do same thing for users?
+#prelim analysis - does the user ID matter? look at boxplots of users, avg total days
+
+dfu <- dfcontracts%>%select(User.ID)%>%
+  group_by(User.ID)%>%
+  summarise(count = n())%>%
+  arrange(-count)
+
+hist(dfcontracts$User.ID)
+
+plot(dfu$User.ID, dfu$count)
+p
+
+#update data table to include categorical, remove ID's
+
+dfcon <- rbind(dfcontracts,v15,v1,v6,v18,v23,v5,v26)
+#
+
+Convert Doc Type
+
+qplot(Area, Total.Days, data = SOW, geom = c("boxplot", "jitter"))
+
+#convert data to correct forms
+
+dfcontracts$SubDate <- as.Date(as.character(dfcontracts$Submitted.Date),format="%m/%d/%Y")
+dfcontracts$EnterDate <- as.Date(as.character(dfcontracts$System.Entered.Date),format="%m/%d/%Y")
+dfcontracts$ExecuteDate <- as.Date(as.character(dfcontracts$Contract.Execute.Date),format="%m/%d/%Y")
+
+
+#Convert to ts
+dfcontracts$EnterDate <- as.Date(as.character(dfcontracts$System.Entered.Date),format="%m/%d/%Y")
+
+SubDate.ts <- as.ts(x = atm1[, -1], order.by = atm1$DATE)
+
+
+
+
+
 
 ```
 
-## R Markdown
+### Supplier
 
-summary(cars)
-```
-
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+### dates

@@ -1,0 +1,242 @@
+---
+title: "Contract Execution"
+author: "Cheryl Bowersox"
+date: "October 21, 2018"
+output: word_document
+---
+## Introduction
+
+As part of a large IT organization one of my team's responsibilities is to move contracts from drafting through execution, and we are frequently asked for an estimate of processing time. The current model used for estimates has a very larger window, taking anywhere between one and twelve weeks.  This results in difficulty accurately forecasting project expenses and adhering to project timelines.  Furthermore, delays in contract execution can result in additional expenses because other parts of a complex project are put on hold to accommodate uncertain start dates.  This can also create variable deliverable quality in outcomes and risks to department goals. 
+
+The number of variables and dependencies involved in the corporate setting results in a expanded project.  There are differing types of contracts, multiple reviewers and stages to the process, widely variable dollar amounts, and differing vendors.  Additionally, each contract is by nature a distinct engagement, and there are external timing factors, such as year-end financial processes or quarterly forecasts, that may influence the timing. 
+
+## Other Approaches
+
+Other approaches to the problem of contract execution timing which have been attempted have not been very successful.  
+1. Amount based:  For several years project managers estimated the timing based on the amount of contract, but routinely underestimated the smaller contracts.  
+
+2.  Confidence Interval <provide details here of current process> 
+The current model in use examined historical data to determine an 80% confidence interval around the mean for all contracts and provides the upper bound as a pessimistic estimate. For example, all contracts greater than $500K will be executed within 60 business days.  While this model is still valid, this upper bound does not provide the precise timing needed to accurately plan a larger project.  
+
+## Hypothesis for this analysis 
+My hypothesis is that a time-series analysis of two years of historical data, or around 400 records, could improve accuracy of predictions for execution time if all available variables are included. 
+
+By modeling the data as a time-series I hope to account for variability introduced by external cyclical factors.  The inclusion variables such as type of contract, vendor, processors, amounts, and other features will refine the estimation capability. In addition to better execution predictions, any consistent patterns that emerge and analysis of outliers will enable a better understanding of key drivers for delays in execution.
+
+## Project Goals
+This project has two main objectives. The first goal is to create a valid predictive model of contract exceution time that can be applied to new submissions.  The second goal is to discover which varibales have the greatest influence on contract timing. Understanding these variables can help make informed business decisions when developing new contract requirments.  
+
+
+##Data Exploration
+### Data Sources
+Data for this analysis was gathered from two systems and combined.  The first data source was a online request intake tool. Data such as requestor, vendor, intake date, and responsible analyst was gathered from this system.  The second data source was a corporate contract processing system, that includes information such as contract amount, funding organization, and execution date. 
+
+Data was combined from both system for each contract submitted and executed between 2/2016 - 8/2018.  
+
+### Deidentification
+Because the data sources contained confidential business data, th was deidentified to avoid discolosing any propriatiery informaiton.  This inclued mapping suppliers and requestors to an id number, scaling amounts to between 0 and 1,  and simliar operations for other key metrics. 
+
+
+###Descirption of source data: 
+
+<< Insert summary field table here >>
+
+
+
+### Variable analysis 
+
+```{r libraryload, include = FALSE}
+library(tidyverse)    #
+library(knitr)        #
+library(VIM)          # correlation
+library(caret)        # correlation, model building
+library(corrplot)     # Correlation
+library(mice)         # Imputation
+library(MASS)         # BoxCox Transformation
+library("usdm")
+library("DataExplorer")
+library(forecast)     # alternate transform
+library(ranger)       # Random Forest Model
+
+library(parallel)     # Parallel processing for model building
+library(doParallel)   # Parallel processing for model building
+
+library(randomForest) # Get Tree, model interpretation
+
+
+library(dummy) # create dummy variables for predictive modeling
+
+#load data
+
+filename <- "contracts.csv"
+
+# Load Trainning Data Set
+contracts.raw <-read.csv(filename, header=TRUE, sep=",",stringsAsFactors = F)
+
+
+```
+
+
+## Data Summary
+
+The initial data set includes `r nrow(contracts.raw)` distinct records, with `r ncol(contracts.raw)` possible variables.  
+
+DRAFT NOTE:  The number of variables will not change, however the number of contracts will change as more data will be collected for this analysis over the next 2 weeks. 
+
+The data consists of multiple categorical variables, such as document type, supplier ID, and user ID. 
+
+Because of the large number of suppliers and users,  an intial analysis is done to determine if they can be grouped in any way.  
+
+
+
+
+```{r setup, include=FALSE}
+#data conversions - to dates
+contracts <- contracts.raw %>% 
+  mutate(Sub.Date = 
+           as.Date(as.character(contracts.raw$Submitted.Date), 
+                   format="%m/%d/%Y")) %>%
+  mutate(Enter.Date = 
+           as.Date(as.character(contracts.raw$System.Entered.Date),
+                   format="%m/%d/%Y"))%>%
+  mutate(Exec.Date = 
+           as.Date(as.character(contracts.raw$Contract.Execute.Date),
+                   format="%m/%d/%Y")) %>%
+  mutate(C.Total = replace_na(as.double(Scaled.C.Total),0))%>%
+  mutate(Amount = replace_na(as.double(Scaled.Amount),0))%>%
+  select(-Submitted.Date, -System.Entered.Date, -Contract.Execute.Date,
+         -Scaled.C.Total,-Scaled.Amount)
+
+
+#A look at categorical variables
+  
+qplot(Doc.Type, Total.Days, data = contracts, geom = c("boxplot", "jitter"))
+
+# look at user ID's
+hist(contracts$User.ID, main ="Frequency by User ID")
+dfu <- contracts%>%select(User.ID)%>%
+  group_by(User.ID)%>%
+  summarise(count = n())%>%
+  arrange(-count)
+
+newbs <- dfu%>%filter(count < 3)%>%select(User.ID)
+
+
+
+#vendors - same thing
+hist(contracts2$Vendor.ID)  
+dfv <- contracts%>%select(Vendor.ID)%>%
+  group_by(Vendor.ID)%>%
+  summarise(count = n())%>%
+  arrange(-count)
+
+#discuss decision to group supplier ID by top 10, the rest as 'others'
+dfnewv<- dfv%>%filter(count <2)
+
+hist(contracts$OrgID)
+dfo <- contracts%>%select(OrgID)%>%
+  group_by(OrgID)%>%
+  summarise(count = n())%>%
+  arrange(-count)
+
+dfonew <- dfo%>%filter(count <5)
+
+#Discuss decision to group org as freq or number
+# <5 = New
+
+
+
+#mutate to add new users, new vendors column, group the newbs, and remove the olds
+contracts2 <- contracts %>%
+  mutate(New.Users= if_else(User.ID %in% newbs$User.ID, 
+                            "NewUser", as.character(User.ID)))%>%
+  mutate(New.Vendors = if_else(Vendor.ID %in% dfnewv$Vendor.ID,
+                               "NewVendor",as.character(Vendor.ID)))%>%
+  mutate(New.Org = if_else(OrgID %in% dfonew$OrgID,
+                               "RareOrg",as.character(OrgID)))%>%
+  select(-User.ID,-Vendor.ID, -OrgID)
+
+
+
+
+#from fastDummmies package create dummy cols for vendors
+
+catcols <- c("Doc.Type", "New.Org", "New.Users","New.Vendors")
+
+contracts3 <- fastDummies::dummy_cols(contracts2, 
+                                   select_columns = catcols,
+                                   remove_most_frequent_dummy=TRUE)
+
+contracts4 <-contracts3%>%select(-Doc.Type,-New.Users,-New.Vendors,-New.Org)%>%
+  arrange(Sub.Date)
+
+ncol(contracts4)
+
+#From DataExplorer
+
+plot_scatterplot(contracts, by = "Total.Days", title = "Plot by Total Days to Execute")
+
+```
+## Discussion of grouping for users and vendors
+Users who submit less than 3 contracts make up about 50% of the users.  New dummy variable created New.User when the user is less than 3 submissions.  The remaining users will be given dummy variables.
+Similarly, there are 9 vendors with only 1 submission, which will be classified as a new vendor. 
+There are 17 distinct possible organizations submiting contract requests.  Of those 17, 8 of them have submitted less than 5 requests in the time frame in question, these are are classified together as a 'rare' org.  The remaning organzations are modeled using dummy categorical variables.  
+
+The new data set with categorical variables is a sparse table with `r ncol(contracts3)` columns.  
+
+
+<insert more discusison of category splits- why did I leave these so broad (complexity of business situations, to determine if they are influential --> may result in later groupings, but first need to determine which are influential and which are not) 
+
+
+#time series analysis
+Clean and transformed data need to plot ts for all stages based on submit date
+
+```{r plotasts, include = FALSE}
+
+library(xts)
+
+
+
+#splitting the data, Order by Sub.Date
+#ts1 = by submit date, drop ID column, drop enter date, exec date, look at just total.days
+
+#by Sub Date, model total days
+days <- contracts4$Sub.Date
+cts1 <- contracts4%>%
+  select(-ID,-Enter.Date,-Exec.Date,-Sub.Date)
+
+con.ts1a <- xts(cts1, order.by = days)
+
+plot(con.ts1a$Total.Days, main = "Total Days to execute by day")
+
+
+plot(con.ts1a$Prelim.Days, main = "Prelim Review Days day")
+
+
+#Split Data
+#just for con.ts1a first
+
+n =nrow(con.ts1) #253
+#plot(contracts4$Sub.Date,contracts4$Total.Days)
+
+
+
+# checking ACF
+ 
+#Model for con.ts1: total days by prelim date
+
+#testing - for weekly,biweekly lag
+lagdays <- c(1,5, 7, 14, 30,60)
+lag.plot(con.ts1, lags = 6, set.lags = lagdays, do.lines = FALSE)
+Acf(a1.ts, plot=T) 
+
+#seasonal adjustment
+a1.ts <- ts(a1.ts,frequency=7)
+traina1 <- window(a1.ts,start = 1,end=42)
+testa1 <- window(a1.ts, start=43)
+
+seasonplot(a1.ts,ylab="Cash 1000s", xlab="Day", main="Weekly Plot, ATM1", col=1:20, pch=19)
+```
+
+
+
