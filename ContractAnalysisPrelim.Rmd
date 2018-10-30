@@ -24,17 +24,18 @@ My hypothesis is that a time-series analysis of two years of historical data, or
 By modeling the data as a time-series I hope to account for variability introduced by external cyclical factors.  The inclusion variables such as type of contract, vendor, processors, amounts, and other features will refine the estimation capability. In addition to better execution predictions, any consistent patterns that emerge and analysis of outliers will enable a better understanding of key drivers for delays in execution.
 
 ## Project Goals
-This project has two main objectives. The first goal is to create a valid predictive model of contract exceution time that can be applied to new submissions.  The second goal is to discover which varibales have the greatest influence on contract timing. Understanding these variables can help make informed business decisions when developing new contract requirments.  
+This project has two main objectives. The first goal is to create a valid predictive model of contract execution time that can be applied to new submissions.  The second goal is to discover which variables have the greatest influence on contract timing. Understanding these variables can help make informed business decisions when developing new contract requirements.  
 
 
 ##Data Exploration
+
 ### Data Sources
-Data for this analysis was gathered from two systems and combined.  The first data source was a online request intake tool. Data such as requestor, vendor, intake date, and responsible analyst was gathered from this system.  The second data source was a corporate contract processing system, that includes information such as contract amount, funding organization, and execution date. 
+Data for this analysis was gathered from two systems and combined.  The first data source was a online request intake tool. Data such as requester, vendor, intake date, and responsible analyst was gathered from this system.  The second data source was a corporate contract processing system, that includes information such as contract amount, funding organization, and execution date. 
 
 Data was combined from both system for each contract submitted and executed between 2/2016 - 8/2018.  
 
 ### Deidentification
-Because the data sources contained confidential business data, th was deidentified to avoid discolosing any propriatiery informaiton.  This inclued mapping suppliers and requestors to an id number, scaling amounts to between 0 and 1,  and simliar operations for other key metrics. 
+Because the data sources contained confidential business data, th was deidentified to avoid disclosing any proprietary information.  This include mapping suppliers and requests to an id number, scaling amounts to between 0 and 1,  and similar operations for other key metrics. 
 
 
 ###Descirption of source data: 
@@ -87,12 +88,12 @@ DRAFT NOTE:  The number of variables will not change, however the number of cont
 
 The data consists of multiple categorical variables, such as document type, supplier ID, and user ID. 
 
-Because of the large number of suppliers and users,  an intial analysis is done to determine if they can be grouped in any way.  
+Because of the large number of suppliers and users,  an initial analysis is done to determine if they can be grouped in any way.  
 
 
 
 
-```{r setup, include=FALSE}
+```{r setup, echo=FALSE}
 #data conversions - to dates
 contracts <- contracts.raw %>% 
   mutate(Sub.Date = 
@@ -181,21 +182,41 @@ ncol(contracts4)
 plot_scatterplot(contracts, by = "Total.Days", title = "Plot by Total Days to Execute")
 
 ```
-## Discussion of grouping for users and vendors
+
+
+### Discussion of grouping for users and vendors
 Users who submit less than 3 contracts make up about 50% of the users.  New dummy variable created New.User when the user is less than 3 submissions.  The remaining users will be given dummy variables.
+
+```{r}
+#make this prettier
+head(dfu,10)
+```
+
+
 Similarly, there are 9 vendors with only 1 submission, which will be classified as a new vendor. 
-There are 17 distinct possible organizations submiting contract requests.  Of those 17, 8 of them have submitted less than 5 requests in the time frame in question, these are are classified together as a 'rare' org.  The remaning organzations are modeled using dummy categorical variables.  
+
+```{r}
+#make this prettier
+head(dfv,10)
+```
+
+There are 17 distinct possible organizations submitting contract requests.  Of those 17, 8 of them have submitted less than 5 requests in the time frame in question, these are are classified together as a 'rare' org.  The renaming organizations are modeled using dummy categorical variables.  
+
+```{r}
+#make this prettier
+head(dfo,10)
+```
 
 The new data set with categorical variables is a sparse table with `r ncol(contracts3)` columns.  
 
 
-<insert more discusison of category splits- why did I leave these so broad (complexity of business situations, to determine if they are influential --> may result in later groupings, but first need to determine which are influential and which are not) 
+<insert more discussion of category splits- why did I leave these so broad (complexity of business situations, to determine if they are influential --> may result in later groupings, but first need to determine which are influential and which are not) 
 
 
 #time series analysis
-Clean and transformed data need to plot ts for all stages based on submit date
+Clean and transformed data need to plot ts for Total Days based on the original submit date. The assumption is that the length of time a contract takes to be executed may have a time series component, and should be reviewed to rule this out. 
 
-```{r plotasts, include = FALSE}
+```{r plotasts, echo = FALSE}
 
 library(xts)
 
@@ -209,10 +230,10 @@ cts1 <- contracts4%>%
 
 con.ts1a <- xts(cts1, order.by = days)
 
-plot(con.ts1a$Total.Days, main = "Total Days to execute by day")
+(plot(con.ts1a$Total.Days, main = "Total Days to execute by day"))
 
 
-plot(con.ts1a$Prelim.Days, main = "Prelim Review Days day")
+(plot(con.ts1a$Prelim.Days, main = "Prelim Review Days day"))
 
 
 #Split Data
@@ -231,7 +252,7 @@ test1 <- window(con.ts1a, start=203)
  
 #testing - for weekly,biweekly lag
 lagdays <- c(1,5, 7, 14, 30,60)
-lag.plot(con.ts1a$Total.Days, lags = 6, set.lags = lagdays, do.lines = FALSE)
+(lag.plot(con.ts1a$Total.Days, lags = 6, set.lags = lagdays, do.lines = FALSE))
 
 #Acf(x=con.ts1a$Total.Days,plot=TRUE) 
 
@@ -247,8 +268,8 @@ lag.plot(con.ts1a$Total.Days, lags = 6, set.lags = lagdays, do.lines = FALSE)
 
 
 ### Discussion of TS
-For Total Days by submission date (Sub.Date) ther eis no obvious lag presented when evalulated for daily, weekly, and a monthly lag. 
-The irregulator nature of the work - some days have multiple entries, some days have no entry. Based on the prelimiary plots there may be no simple signal to extract from the data as a straight time series. 
+For Total Days by submission date (Sub.Date) there is no obvious lag presented when evaluated for daily, weekly, and a monthly lag. 
+The irregular nature of the work - some days have multiple entries, some days have no entry. Based on the preliminary plots there may be no simple signal to extract from the data as a straight time series. 
 
 
 ##Forecasting as a TS
@@ -261,28 +282,12 @@ The irregulator nature of the work - some days have multiple entries, some days 
 #Predictive models using VAR, glm, tree, random forest models
 
 
-Mid-point analysis: Need further data exploration to be able to create meaninful models, glm wiht 72 variables gives us an RMSE almost 0 and R = 1, which is not correct.   
+Mid-point analysis: Need further data exploration to be able to create meaningful models, glm whit 72 variables gives us an RMSE almost 0 and R = 1, which is not correct.   
 Linear combination on Prelim + System = Total.Days, need to remove these values
 
 
 
-Outstanding  questions: 
-
-Too many dummy variables for glm - can we group more meaninful way? does a tree model work better? can we simplify modeling by excluding user ? or vendor? 
-based on SME research - user may be irrlevant if vendor is well known, or analyst = J. 
-If user /vendor is removed or binned it reduces # of variables dramatically?
-
-Do distince models for doc types make sense?
-Does it make sense to model prelim vs. system seperatley and then combine results?
-
-
-
-
-
-
-Is vendor relevant if we have vendor categories (Master/preferred, etc)?
-
-
+### Models
 
 ```{r}
 #back to our data frame contracts4
@@ -318,3 +323,19 @@ GLM_M1_Data1
 
 
 #Random Forest Model Here
+
+```
+
+
+
+### Outstanding  questions/issues: 
+Running into errors forecast based on ts data, possibly can move to a different model to look at the dates, or include them as an input variable. 
+
+Too many dummy variables for glm - can we group more meaningful way? does a tree model work better? can we simplify modeling by excluding user ? or vendor? 
+based on SME research - user may be irrelevant if vendor is well known, or analyst = J. 
+If user /vendor is removed or binned it reduces # of variables dramatically?
+
+Do distinct models for doc types make sense?
+Does it make sense to model prelim vs. system separately and then combine results?
+
+Is vendor relevant if we have vendor categories (Master/preferred, etc)?
