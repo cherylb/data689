@@ -47,19 +47,19 @@ Because the data sources contained confidential business data, th was deidentifi
 
 ```{r libraryload, include = FALSE}
 library(tidyverse)    #
-library(knitr)        #
-library(VIM)          # correlation
+#library(knitr)        #
+#library(VIM)          # correlation
 library(caret)        # correlation, model building
 library(corrplot)     # Correlation
-library(mice)         # Imputation
-library(MASS)         # BoxCox Transformation
-library("usdm")
+#library(mice)         # Imputation
+#library(MASS)         # BoxCox Transformation
+#library("usdm")
 library("DataExplorer")
 library(forecast)     # alternate transform
-library(ranger)       # Random Forest Model
+#library(ranger)       # Random Forest Model
 
-library(parallel)     # Parallel processing for model building
-library(doParallel)   # Parallel processing for model building
+#library(parallel)     # Parallel processing for model building
+#library(doParallel)   # Parallel processing for model building
 
 library(randomForest) # Get Tree, model interpretation
 
@@ -68,7 +68,9 @@ library(dummy) # create dummy variables for predictive modeling
 
 #load data
 
-filename <- "contracts.csv"
+filename <- "https://raw.githubusercontent.com/cherylb/Data689/master/contracts.csv"
+
+#filename <- "contracts.csv"
 
 # Load Trainning Data Set
 contracts.raw <-read.csv(filename, header=TRUE, sep=",",stringsAsFactors = F)
@@ -112,6 +114,8 @@ contracts <- contracts.raw %>%
   
 qplot(Doc.Type, Total.Days, data = contracts, geom = c("boxplot", "jitter"))
 
+#include some discussion here about contract types, different means, importance of data
+
 # look at user ID's
 hist(contracts$User.ID, main ="Frequency by User ID")
 dfu <- contracts%>%select(User.ID)%>%
@@ -124,7 +128,7 @@ newbs <- dfu%>%filter(count < 3)%>%select(User.ID)
 
 
 #vendors - same thing
-hist(contracts2$Vendor.ID)  
+hist(contracts$Vendor.ID)  
 dfv <- contracts%>%select(Vendor.ID)%>%
   group_by(Vendor.ID)%>%
   summarise(count = n())%>%
@@ -195,9 +199,7 @@ Clean and transformed data need to plot ts for all stages based on submit date
 
 library(xts)
 
-
-
-#splitting the data, Order by Sub.Date
+#Order by Sub.Date
 #ts1 = by submit date, drop ID column, drop enter date, exec date, look at just total.days
 
 #by Sub Date, model total days
@@ -216,27 +218,103 @@ plot(con.ts1a$Prelim.Days, main = "Prelim Review Days day")
 #Split Data
 #just for con.ts1a first
 
-n =nrow(con.ts1) #253
-#plot(contracts4$Sub.Date,contracts4$Total.Days)
+n =nrow(con.ts1a) #253
+
+#split data
+train1 <- window(con.ts1a,start = 1,end=202)
+test1 <- window(con.ts1a, start=203)
 
 
 
+#Model for con.ts1: total days by submit date
 # checking ACF
  
-#Model for con.ts1: total days by prelim date
-
 #testing - for weekly,biweekly lag
 lagdays <- c(1,5, 7, 14, 30,60)
-lag.plot(con.ts1, lags = 6, set.lags = lagdays, do.lines = FALSE)
-Acf(a1.ts, plot=T) 
+lag.plot(con.ts1a$Total.Days, lags = 6, set.lags = lagdays, do.lines = FALSE)
 
-#seasonal adjustment
-a1.ts <- ts(a1.ts,frequency=7)
-traina1 <- window(a1.ts,start = 1,end=42)
-testa1 <- window(a1.ts, start=43)
+#Acf(x=con.ts1a$Total.Days,plot=TRUE) 
 
-seasonplot(a1.ts,ylab="Cash 1000s", xlab="Day", main="Weekly Plot, ATM1", col=1:20, pch=19)
+#acf(con.ts1a$Total.Days, na.action = na.pass)
+
+
+#modeling as a time series: 
+#This is throwing an error in the model
+#fit1 <- naive(train1, h=70)
+#fcst1 <-forecast(test1, h=70)
+#accuracy(fit1a1, testa1)
 ```
 
 
+### Discussion of TS
+For Total Days by submission date (Sub.Date) ther eis no obvious lag presented when evalulated for daily, weekly, and a monthly lag. 
+The irregulator nature of the work - some days have multiple entries, some days have no entry. Based on the prelimiary plots there may be no simple signal to extract from the data as a straight time series. 
 
+
+##Forecasting as a TS
+< Problem with the data - have not been able to solve- ts models producing error 'R warning In get(x, envir = ns) : restarting interrupted promise evaluation'  this will need to be re-evaluated
+
+##discussion of overall trends here
+- decreased variance over time, decreased mean (?)
+
+
+#Predictive models using VAR, glm, tree, random forest models
+
+
+Mid-point analysis: Need further data exploration to be able to create meaninful models, glm wiht 72 variables gives us an RMSE almost 0 and R = 1, which is not correct.   
+Linear combination on Prelim + System = Total.Days, need to remove these values
+
+
+
+Outstanding  questions: 
+
+Too many dummy variables for glm - can we group more meaninful way? does a tree model work better? can we simplify modeling by excluding user ? or vendor? 
+based on SME research - user may be irrlevant if vendor is well known, or analyst = J. 
+If user /vendor is removed or binned it reduces # of variables dramatically?
+
+Do distince models for doc types make sense?
+Does it make sense to model prelim vs. system seperatley and then combine results?
+
+
+
+
+
+
+Is vendor relevant if we have vendor categories (Master/preferred, etc)?
+
+
+
+```{r}
+#back to our data frame contracts4
+
+#split the data
+
+set.seed(42) 
+sample = sample.int(n = nrow(contracts4), size = floor(.80*nrow(contracts)), replace = F)
+
+contrain = contracts4[sample, ]
+contest  = contracts4[-sample,]
+
+#VAR model here
+#TBD
+
+
+#To many predictors to run a GLM 
+
+#GLM Modle here
+# first, start with a general linear model 
+myControl = trainControl(method = 'cv', number = 5, 
+  verboseIter = FALSE, savePredictions = TRUE,allowParallel = T)
+  
+set.seed(143)
+
+con.m1 <- contrain %>%select(-Prelim.Days, -System.Days)
+GLM_M1_Data1 = train(Total.Days ~ ., data = con.m1 , metric = 'RMSE', method = 'glm',preProcess = c('center', 'scale'), trControl = myControl)
+GLM_M1_Data1
+
+
+
+#Nueral Net Model Here
+
+
+#Random Forest Model Here
